@@ -129,6 +129,41 @@
 
 .stepContent { padding: 40px; }
 
+/* ── Mode toggle (DICOM / BIDS) ────────────────────── */
+.modeToggle {
+  display: flex;
+  gap: 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-full);
+  padding: 4px;
+  width: fit-content;
+  margin-bottom: 28px;
+}
+
+.modeBtn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 18px;
+  border-radius: var(--r-full);
+  font-family: var(--font-display);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-2);
+  transition: color var(--t), background var(--t), box-shadow var(--t);
+  white-space: nowrap;
+}
+
+.modeBtn:hover { color: var(--text); }
+
+.modeBtnActive {
+  background: var(--bg-2);
+  color: var(--teal);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+  border: 1px solid var(--border);
+}
+
 .stepHeading { margin-bottom: 32px; }
 
 .stepHeading h2 {

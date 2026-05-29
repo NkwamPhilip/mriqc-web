@@ -11,8 +11,10 @@ import {
 } from '../lib/api'
 import s from './Analyze.module.css'
 
-const STEPS = ['Setup', 'Convert', 'BIDS', 'MRIQC', 'Results']
-const STEP_IDX = { setup: 0, converting: 1, bids_ready: 2, processing: 3, results: 4 }
+const STEPS_DICOM = ['Setup', 'Convert', 'BIDS', 'MRIQC', 'Results']
+const STEPS_BIDS  = ['Setup', 'MRIQC', 'Results']
+const STEP_IDX_DICOM = { setup: 0, converting: 1, bids_ready: 2, processing: 3, results: 4 }
+const STEP_IDX_BIDS  = { setup: 0, processing: 1, results: 2 }
 const MODALITIES = [
   { id: 'T1w',  label: 'T1w',  desc: 'Anatomical' },
   { id: 'T2w',  label: 'T2w',  desc: 'Anatomical' },
@@ -47,11 +49,11 @@ function useInterval(cb, delay) {
 }
 
 // ── Step indicator ───────────────────────────────────────────────────────────
-function StepBar({ current }) {
-  const idx = STEP_IDX[current] ?? 0
+function StepBar({ current, steps, stepIdx }) {
+  const idx = stepIdx[current] ?? 0
   return (
     <div className={s.stepBar}>
-      {STEPS.map((step, i) => (
+      {steps.map((step, i) => (
         <div key={step} className={s.stepBarItem}>
           <div className={`${s.stepCircle} ${i < idx ? s.done : ''} ${i === idx ? s.active : ''}`}>
             {i < idx
@@ -59,7 +61,7 @@ function StepBar({ current }) {
               : <span>{i + 1}</span>}
           </div>
           <span className={`${s.stepLabel} ${i === idx ? s.stepLabelActive : ''}`}>{step}</span>
-          {i < STEPS.length - 1 && <div className={`${s.stepLine} ${i < idx ? s.stepLineDone : ''}`} />}
+          {i < steps.length - 1 && <div className={`${s.stepLine} ${i < idx ? s.stepLineDone : ''}`} />}
         </div>
       ))}
     </div>
@@ -82,10 +84,11 @@ function ErrorBanner({ message, onDismiss }) {
 }
 
 // ── STEP 1: Setup ─────────────────────────────────────────────────────────────
-function SetupStep({ file, onFile, config, onChange, onNext }) {
+function SetupStep({ file, onFile, config, onChange, onNext, mode, onModeChange }) {
   const [drag, setDrag] = useState(false)
   const [advanced, setAdvanced] = useState(false)
   const inputRef = useRef()
+  const isBids = mode === 'bids'
 
   function handleDrop(e) {
     e.preventDefault(); setDrag(false)
@@ -93,11 +96,41 @@ function SetupStep({ file, onFile, config, onChange, onNext }) {
     if (f && f.name.endsWith('.zip')) onFile(f)
   }
 
+  function handleModeSwitch(newMode) {
+    onFile(null)   // clear the file when switching modes
+    onModeChange(newMode)
+  }
+
   return (
     <div className={s.stepContent}>
+      {/* Mode toggle */}
+      <div className={s.modeToggle}>
+        <button
+          className={`${s.modeBtn} ${!isBids ? s.modeBtnActive : ''}`}
+          onClick={() => handleModeSwitch('dicom')}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          DICOM Files
+        </button>
+        <button
+          className={`${s.modeBtn} ${isBids ? s.modeBtnActive : ''}`}
+          onClick={() => handleModeSwitch('bids')}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          BIDS Dataset
+        </button>
+      </div>
+
       <div className={s.stepHeading}>
         <h2>Upload & Configure</h2>
-        <p>Upload a ZIP of your DICOM folder. The server will run <code>dcm2bids</code> to convert to BIDS format, then send to MRIQC for quality assessment.</p>
+        {isBids
+          ? <p>Upload a ZIP of your BIDS-compliant dataset. It will be sent directly to MRIQC — no conversion needed.</p>
+          : <p>Upload a ZIP of your DICOM folder. The server will run <code>dcm2bids</code> to convert to BIDS format, then send to MRIQC for quality assessment.</p>
+        }
       </div>
 
       {/* Upload zone */}
@@ -121,7 +154,7 @@ function SetupStep({ file, onFile, config, onChange, onNext }) {
             </div>
             <div className={s.fileMeta}>
               <span className={s.fileName}>{file.name}</span>
-              <span className={s.fileSize}>{fmtSize(file.size)} · DICOM ZIP</span>
+              <span className={s.fileSize}>{fmtSize(file.size)} · {isBids ? 'BIDS ZIP' : 'DICOM ZIP'}</span>
             </div>
             <button className={s.fileRemove} onClick={(e) => { e.stopPropagation(); onFile(null) }} title="Remove">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -135,7 +168,10 @@ function SetupStep({ file, onFile, config, onChange, onNext }) {
                 <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
               </svg>
             </div>
-            <p className={s.dropzoneText}><strong>Drop your DICOM ZIP here</strong><br />or click to browse</p>
+            <p className={s.dropzoneText}>
+              <strong>{isBids ? 'Drop your BIDS ZIP here' : 'Drop your DICOM ZIP here'}</strong>
+              <br />or click to browse
+            </p>
             <span className={s.dropzoneHint}>.zip files only</span>
           </div>
         )}
@@ -144,11 +180,18 @@ function SetupStep({ file, onFile, config, onChange, onNext }) {
       {/* Subject / Session */}
       <div className={s.configRow}>
         <div className={s.field}>
-          <label className={s.label}>Subject ID <span className={s.required}>*</span></label>
+          <label className={s.label}>
+            Subject ID {isBids ? <span className={s.optional}>(optional)</span> : <span className={s.required}>*</span>}
+          </label>
           <input className={s.input} placeholder="e.g. 01"
             value={config.subjectId}
             onChange={(e) => onChange('subjectId', e.target.value.replace(/[^a-zA-Z0-9]/g, ''))} />
-          <span className={s.hint}>Alphanumeric only — must match folder <code>sub-{config.subjectId || 'XX'}</code></span>
+          <span className={s.hint}>
+            {isBids
+              ? 'Leave blank to process all subjects, or enter one to target a specific subject'
+              : <>Alphanumeric only — must match folder <code>sub-{config.subjectId || 'XX'}</code></>
+            }
+          </span>
         </div>
         <div className={s.field}>
           <label className={s.label}>Session ID <span className={s.optional}>(optional)</span></label>
@@ -210,9 +253,9 @@ function SetupStep({ file, onFile, config, onChange, onNext }) {
       <div className={s.navButtons}>
         <Link to="/" className="btn-outline">← Home</Link>
         <button className="btn-primary"
-          disabled={!file || !config.subjectId || config.modalities.length === 0}
+          disabled={!file || (!isBids && !config.subjectId) || config.modalities.length === 0}
           onClick={onNext}>
-          Run DICOM → BIDS Conversion
+          {isBids ? 'Run MRIQC' : 'Run DICOM → BIDS Conversion'}
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </button>
       </div>
@@ -649,6 +692,7 @@ function ResultsStep({ results, config, onReset }) {
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function Analyze() {
   const [step, setStep] = useState('setup')
+  const [mode, setMode] = useState('dicom')   // 'dicom' | 'bids'
   const [dicomFile, setDicomFile] = useState(null)
   const [config, setConfig] = useState({ subjectId: '01', sessionId: 'baseline', modalities: ['T1w'], nProcs: 4, memGb: 16 })
   const [bidsBlob, setBidsBlob] = useState(null)
@@ -741,7 +785,8 @@ export default function Analyze() {
     URL.revokeObjectURL(url)
   }
 
-  async function handleMRIQC() {
+  async function handleMRIQC(blobOverride) {
+    const inputBlob = blobOverride ?? bidsBlob
     setError(null)
     setStep('processing')
     setMriqcProgress(5)
@@ -749,7 +794,7 @@ export default function Analyze() {
     startFakeProgress(setMriqcProgress, setMriqcStatus, MRIQC_MESSAGES, 85)
 
     try {
-      const blob = await runMRIQC(bidsBlob, config, (pct) => {
+      const blob = await runMRIQC(inputBlob, config, (pct) => {
         setMriqcProgress(5 + pct * 0.1)
       })
       stopTimers()
@@ -764,36 +809,62 @@ export default function Analyze() {
     } catch (err) {
       stopTimers()
       setError(err.message)
-      setStep('bids_ready')
+      // BIDS mode: go back to setup; DICOM mode: go back to bids_ready (conversion output)
+      setStep(mode === 'bids' ? 'setup' : 'bids_ready')
     }
+  }
+
+  async function handleBidsDirect() {
+    // BIDS direct path: use the uploaded ZIP as the BIDS blob, skip convert + bids_ready
+    setBidsBlob(dicomFile)
+    await handleMRIQC(dicomFile)
   }
 
   function handleReset() {
     setDicomFile(null); setBidsBlob(null); setBidsFiles(null)
     setResults(null); setError(null)
     setConvProgress(0); setConvElapsed('0:00'); setConvPhase('uploading'); setConvStatus('')
-    setMriqcProgress(0); setMriqcElapsed('0:00')
+    setMriqcProgress(0); setMriqcElapsed('0:00'); setMriqcStatus('')
     setStep('setup')
+    // keep `mode` so user doesn't have to re-select after analyzing another dataset
   }
 
   useEffect(() => () => stopTimers(), [])
+
+  const steps    = mode === 'bids' ? STEPS_BIDS    : STEPS_DICOM
+  const stepIdx  = mode === 'bids' ? STEP_IDX_BIDS : STEP_IDX_DICOM
 
   return (
     <div className={s.page}>
       <div className={s.pageHeader}>
         <div className="container">
-          <h1 className={s.pageTitle}>DICOM → BIDS → <span className="gradient-text">MRIQC</span></h1>
-          <p className={s.pageDesc}>Upload DICOM data, convert to BIDS, run quality control, and download your metrics.</p>
+          <h1 className={s.pageTitle}>
+            {mode === 'bids'
+              ? <>BIDS → <span className="gradient-text">MRIQC</span></>
+              : <>DICOM → BIDS → <span className="gradient-text">MRIQC</span></>
+            }
+          </h1>
+          <p className={s.pageDesc}>
+            {mode === 'bids'
+              ? 'Upload a BIDS-compliant dataset ZIP and run MRIQC quality assessment directly.'
+              : 'Upload DICOM data, convert to BIDS, run quality control, and download your metrics.'
+            }
+          </p>
         </div>
       </div>
 
       <div className={`${s.pageBody} container`}>
-        <StepBar current={step} />
+        <StepBar current={step} steps={steps} stepIdx={stepIdx} />
         {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
         <div className={s.card}>
           {step === 'setup' && (
-            <SetupStep file={dicomFile} onFile={setDicomFile} config={config} onChange={cfgChange} onNext={handleConvert} />
+            <SetupStep
+              file={dicomFile} onFile={setDicomFile}
+              config={config} onChange={cfgChange}
+              mode={mode} onModeChange={(m) => { setMode(m); setStep('setup') }}
+              onNext={mode === 'bids' ? handleBidsDirect : handleConvert}
+            />
           )}
           {step === 'converting' && (
             <ConvertingStep
@@ -811,7 +882,7 @@ export default function Analyze() {
           )}
           {step === 'processing' && (
             <ProcessingStep progress={mriqcProgress} statusMsg={mriqcStatus} elapsed={mriqcElapsed}
-              onCancel={() => { stopTimers(); setStep('bids_ready') }} />
+              onCancel={() => { stopTimers(); setStep(mode === 'bids' ? 'setup' : 'bids_ready') }} />
           )}
           {step === 'results' && results && (
             <ResultsStep results={results} config={config} onReset={handleReset} />

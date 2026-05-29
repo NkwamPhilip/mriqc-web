@@ -73,7 +73,7 @@ function HeroSection() {
             <span className="gradient-text">Quality Control</span>
           </h1>
           <p className={s.heroDesc}>
-            Upload a BIDS-formatted dataset or a raw DICOM ZIP — WebMRIQC handles both. Receive comprehensive Image Quality Metrics in minutes with no software installation, no command line, no cluster required.
+            Already have BIDS data? Upload and run MRIQC directly. Bringing raw DICOMs? We auto-convert them to BIDS, then run the same pipeline. Comprehensive Image Quality Metrics in minutes — no installation, no command line.
           </p>
           <div className={s.heroCtas}>
             <Link to="/analyze" className="btn-primary" style={{ fontSize: '1rem', padding: '15px 32px' }}>
@@ -158,8 +158,8 @@ function PipelineSection() {
   const steps = [
     {
       num: '01',
-      title: 'Prepare Your Data',
-      desc: 'Have a BIDS-compliant dataset? Zip it. Have raw DICOMs? Zip the folder — WebMRIQC auto-converts to BIDS for you.',
+      title: 'Pick Your Starting Point',
+      desc: 'Have BIDS data? Zip your dataset folder — you\'re done. Have raw DICOMs? Zip the DICOM folder — WebMRIQC handles the rest.',
       icon: (
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -173,8 +173,8 @@ function PipelineSection() {
     },
     {
       num: '02',
-      title: 'Upload ZIP',
-      desc: 'Drag and drop your BIDS or DICOM ZIP into WebMRIQC. DICOM uploads are automatically converted to BIDS before processing.',
+      title: 'Upload Your ZIP',
+      desc: 'Drag and drop your ZIP — BIDS or DICOM. BIDS datasets are sent directly to MRIQC. DICOM uploads are auto-converted to BIDS first, then processed.',
       icon: (
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="16 16 12 12 8 16" />
@@ -186,8 +186,8 @@ function PipelineSection() {
     },
     {
       num: '03',
-      title: 'Cloud Processing',
-      desc: 'Your data is processed by our MRIQC pipeline. DICOM-to-BIDS conversion runs first if needed, then all IQMs are computed automatically.',
+      title: 'MRIQC Pipeline',
+      desc: 'BIDS datasets go straight to MRIQC. DICOM uploads trigger an automatic dcm2bids conversion first, then MRIQC runs — all IQMs computed either way.',
       icon: (
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="3" />
@@ -217,9 +217,9 @@ function PipelineSection() {
       <div className="container">
         <div className={s.sectionHead}>
           <span className={s.sectionTag}>Workflow</span>
-          <h2 className={s.sectionTitle}>Two Ways In, One Quality Report</h2>
+          <h2 className={s.sectionTitle}>One Tool, Two Starting Points</h2>
           <p className={s.sectionDesc}>
-            Upload a pre-prepared BIDS dataset or raw DICOM files — WebMRIQC handles the conversion automatically and delivers publication-ready quality metrics.
+            Already have BIDS data? Upload and run MRIQC in one step. Bringing raw DICOMs? WebMRIQC converts them automatically — then runs the same pipeline.
           </p>
         </div>
         <div className={s.steps}>
@@ -285,8 +285,8 @@ function FeaturesSection() {
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
         </svg>
       ),
-      title: 'BIDS & DICOM Supported',
-      desc: 'Upload pre-prepared BIDS v1.6 datasets or raw DICOM files. Automatic dcm2bids conversion handles the rest.',
+      title: 'BIDS Direct or DICOM',
+      desc: 'BIDS-ready data goes straight to MRIQC — no conversion step. Raw DICOMs are auto-converted via dcm2bids first. Both paths produce identical quality reports.',
     },
     {
       color: 'blue',
