@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mriqc-web",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/mac/Desktop/mriqc-web && npm run dev"],
+      "port": 3000
+    }
+  ]
+}
