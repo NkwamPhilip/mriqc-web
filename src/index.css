@@ -1,16 +1,18 @@
 :root {
-  --bg: #040D1A;
-  --bg-2: #071629;
-  --bg-3: #0C2240;
-  --bg-glass: rgba(7, 22, 40, 0.88);
+  /* ── Classy Black Dark Theme (default) ── */
+  --bg: #080808;
+  --bg-2: #111111;
+  --bg-3: #1c1c1c;
+  --bg-glass: rgba(8, 8, 8, 0.92);
 
   --teal: #00C8B4;
   --teal-2: #00EDD9;
-  --teal-dim: rgba(0, 200, 180, 0.13);
-  --teal-glow: 0 0 28px rgba(0, 200, 180, 0.22);
+  --teal-dim: rgba(0, 200, 180, 0.12);
+  --teal-glow: 0 0 28px rgba(0, 200, 180, 0.2);
 
-  --blue: #3B82F6;
-  --blue-dim: rgba(59, 130, 246, 0.13);
+  /* Black replaces blue — silver in dark for visibility */
+  --blue: #e2e8f0;
+  --blue-dim: rgba(226, 232, 240, 0.07);
 
   --purple: #8B5CF6;
   --purple-dim: rgba(139, 92, 246, 0.13);
@@ -20,12 +22,16 @@
   --amber: #F59E0B;
   --red: #EF4444;
 
-  --text: #E2EAF4;
-  --text-2: #7A9BBE;
-  --text-3: #3A5570;
+  --text: #efefef;
+  --text-2: #808080;
+  --text-3: #404040;
 
   --border: rgba(0, 200, 180, 0.14);
-  --border-2: rgba(255, 255, 255, 0.07);
+  --border-2: rgba(255, 255, 255, 0.06);
+
+  /* Theme-adaptive helpers used in CSS modules */
+  --hero-glow-2: rgba(200, 200, 220, 0.04);
+  --grid-line: rgba(255, 255, 255, 0.025);
 
   --font-display: 'Space Grotesk', sans-serif;
   --font-body: 'Inter', sans-serif;
@@ -44,6 +50,40 @@
   --t: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-2: #f5f5f5;
+  --bg-3: #ebebeb;
+  --bg-glass: rgba(255, 255, 255, 0.94);
+
+  --teal: #009e8e;
+  --teal-2: #00c4b0;
+  --teal-dim: rgba(0, 158, 142, 0.1);
+  --teal-glow: 0 0 28px rgba(0, 158, 142, 0.14);
+
+  /* Black in light mode — as requested */
+  --blue: #111111;
+  --blue-dim: rgba(17, 17, 17, 0.07);
+
+  --purple: #7c3aed;
+  --purple-dim: rgba(124, 58, 237, 0.1);
+
+  --green: #059669;
+  --green-dim: rgba(5, 150, 105, 0.1);
+  --amber: #D97706;
+  --red: #DC2626;
+
+  --text: #111111;
+  --text-2: #555555;
+  --text-3: #999999;
+
+  --border: rgba(0, 158, 142, 0.15);
+  --border-2: rgba(0, 0, 0, 0.08);
+
+  --hero-glow-2: rgba(0, 0, 0, 0.03);
+  --grid-line: rgba(0, 0, 0, 0.04);
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html { scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
@@ -54,6 +94,7 @@ body {
   font-family: var(--font-body);
   line-height: 1.65;
   overflow-x: hidden;
+  transition: background 0.3s, color 0.3s;
 }
 
 ::-webkit-scrollbar { width: 5px; }
@@ -78,6 +119,7 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   padding: 0 var(--pad);
 }
 
+/* gradient-text: teal→silver in dark, teal→black in light — both premium */
 .gradient-text {
   background: linear-gradient(135deg, var(--teal) 0%, var(--blue) 100%);
   -webkit-background-clip: text;

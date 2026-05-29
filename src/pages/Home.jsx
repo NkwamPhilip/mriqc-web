@@ -105,10 +105,38 @@ function HeroSection() {
 // ─── Stats ──────────────────────────────────────────────────────────────────
 function StatsBar() {
   const stats = [
-    { value: '50+', label: 'Image Quality Metrics', icon: '📊' },
-    { value: '5', label: 'MRI Modalities Supported', icon: '🧠' },
-    { value: 'BIDS v1.6', label: 'Standard Compliant', icon: '✅' },
-    { value: '~10 min', label: 'Processing Time', icon: '⚡' },
+    {
+      value: '50+', label: 'Image Quality Metrics',
+      icon: (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="18" y="3" width="4" height="18" rx="1"/><rect x="10" y="8" width="4" height="13" rx="1"/><rect x="2" y="13" width="4" height="8" rx="1"/>
+        </svg>
+      ),
+    },
+    {
+      value: '5', label: 'MRI Modalities Supported',
+      icon: (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="2"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4"/><path d="M3.1 3.1a13 13 0 0 0 0 17.8M20.9 3.1a13 13 0 0 1 0 17.8"/>
+        </svg>
+      ),
+    },
+    {
+      value: 'BIDS v1.6', label: 'Standard Compliant',
+      icon: (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/>
+        </svg>
+      ),
+    },
+    {
+      value: '~10 min', label: 'Processing Time',
+      icon: (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+      ),
+    },
   ]
   return (
     <div className={s.stats}>
@@ -239,7 +267,7 @@ function FeaturesSection() {
       desc: 'CNR, SNR, EFC, FBER, FD, tSNR, DVARS and many more — computed by the gold-standard MRIQC engine.',
     },
     {
-      color: 'purple',
+      color: 'teal',
       icon: (
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
@@ -274,7 +302,7 @@ function FeaturesSection() {
       desc: 'Publication-ready visual reports with per-participant metrics, group-level TSV tables, and embedded figures.',
     },
     {
-      color: 'purple',
+      color: 'white',
       icon: (
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10"/>

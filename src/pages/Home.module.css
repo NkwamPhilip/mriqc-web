@@ -13,7 +13,7 @@
   position: absolute;
   inset: 0;
   background: radial-gradient(ellipse 80% 60% at 70% 40%, rgba(0,200,180,0.07) 0%, transparent 60%),
-              radial-gradient(ellipse 60% 50% at 30% 60%, rgba(59,130,246,0.06) 0%, transparent 60%);
+              radial-gradient(ellipse 60% 50% at 30% 60%, var(--hero-glow-2) 0%, transparent 60%);
   pointer-events: none;
 }
 
@@ -21,8 +21,8 @@
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 48px 48px;
   pointer-events: none;
   -webkit-mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 100%);
@@ -341,7 +341,9 @@
 }
 
 .feat_teal:hover { border-color: rgba(0,200,180,0.3); box-shadow: 0 8px 32px rgba(0,200,180,0.08); }
-.feat_blue:hover { border-color: rgba(59,130,246,0.3); box-shadow: 0 8px 32px rgba(59,130,246,0.08); }
+.feat_blue:hover { border-color: var(--blue-dim); box-shadow: 0 8px 32px var(--blue-dim); }
+.feat_green:hover { border-color: rgba(16,185,129,0.3); box-shadow: 0 8px 32px rgba(16,185,129,0.08); }
+.feat_white:hover { border-color: var(--border-2); box-shadow: 0 8px 32px rgba(128,128,128,0.06); }
 .feat_purple:hover { border-color: rgba(139,92,246,0.3); box-shadow: 0 8px 32px rgba(139,92,246,0.08); }
 
 .featIcon {
@@ -356,6 +358,8 @@
 
 .featIcon_teal { background: var(--teal-dim); color: var(--teal); }
 .featIcon_blue { background: var(--blue-dim); color: var(--blue); }
+.featIcon_green { background: var(--green-dim); color: var(--green); }
+.featIcon_white { background: rgba(255, 255, 255, 0.07); color: var(--text); }
 .featIcon_purple { background: var(--purple-dim); color: var(--purple); }
 
 .featTitle {
@@ -565,7 +569,14 @@
 
 @media (max-width: 900px) {
   .heroInner { grid-template-columns: 1fr; }
-  .heroRight { display: none; }
+  /* brain visible on mobile — stacks below the text */
+  .heroRight { display: block; }
+  .brainWrapper { max-width: 340px; }
+  /* pull badges inward so they don't overflow narrow screens */
+  .badge1 { top: 6%; left: 0%; }
+  .badge2 { top: 6%; right: 0%; }
+  .badge3 { bottom: 16%; left: -1%; }
+  .badge4 { bottom: 10%; right: -1%; }
   .statsInner { grid-template-columns: repeat(2, 1fr); }
   .stat { border-bottom: 1px solid var(--border); }
   .stat:nth-child(2) { border-right: none; }
@@ -580,6 +591,22 @@
 }
 
 @media (max-width: 600px) {
+  /* Tighten hero so brain is visible without excessive scrolling */
+  .hero {
+    padding-top: calc(var(--nav-height) + 16px);
+    padding-bottom: 28px;
+    min-height: auto;
+  }
+  .heroInner { gap: 24px; }
+  .heroLeft { gap: 16px; }
+  .heroDesc { font-size: 0.95rem; }
+  .heroCtas { flex-direction: column; }
+  .heroMeta { font-size: 0.7rem; }
+  .brainWrapper { max-width: 280px; }
+  .badge { padding: 6px 10px; min-width: 76px; }
+  .badgeLabel { font-size: 0.58rem; }
+  .badgeVal { font-size: 0.85rem; }
+  .badge3 { left: 0%; }
   .statsInner { grid-template-columns: repeat(2, 1fr); }
   .steps { grid-template-columns: 1fr; }
   .featGrid { grid-template-columns: 1fr; }
@@ -587,5 +614,4 @@
   .iqmTableHead span:last-child { display: none; }
   .iqmRow { grid-template-columns: 90px 1fr; }
   .iqmRow > .iqmInterpret { display: none; }
-  .heroCtas { flex-direction: column; }
 }

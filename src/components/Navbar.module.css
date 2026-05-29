@@ -85,6 +85,23 @@
 .burgerOpen span:nth-child(2) { opacity: 0; }
 .burgerOpen span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
 
+.themeToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-full);
+  color: var(--text-2);
+  flex-shrink: 0;
+  transition: color var(--t), background var(--t);
+}
+
+.themeToggle:hover {
+  color: var(--teal);
+  background: var(--teal-dim);
+}
+
 @media (max-width: 768px) {
   .burger { display: flex; }
 
