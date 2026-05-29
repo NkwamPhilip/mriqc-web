@@ -4,7 +4,7 @@ import s from './Navbar.module.css'
 
 function ThemeToggle() {
   const [theme, setTheme] = useState(
-    () => (typeof window !== 'undefined' ? localStorage.getItem('theme') : null) || 'dark'
+    () => (typeof window !== 'undefined' ? localStorage.getItem('theme') : null) || 'light'
   )
 
   useEffect(() => {
@@ -19,6 +19,7 @@ function ThemeToggle() {
       aria-label="Toggle theme"
     >
       {theme === 'dark' ? (
+        /* Sun — switch to light */
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="5"/>
           <line x1="12" y1="1" x2="12" y2="3"/>
@@ -31,6 +32,7 @@ function ThemeToggle() {
           <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
         </svg>
       ) : (
+        /* Moon — switch to dark */
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
         </svg>
@@ -68,18 +70,21 @@ export default function Navbar() {
           </span>
         </Link>
 
-        <div className={`${s.links} ${menuOpen ? s.open : ''}`}>
-          <a href="/#how-it-works" className={s.link} onClick={() => setMenuOpen(false)}>How It Works</a>
-          <a href="/#iqm-guide" className={s.link} onClick={() => setMenuOpen(false)}>IQM Guide</a>
-          <a href="/#references" className={s.link} onClick={() => setMenuOpen(false)}>References</a>
-          <Link to="/compare" className={s.link} onClick={() => setMenuOpen(false)}>Multicenter</Link>
+        {/* Right group: nav links (collapses on mobile) + theme toggle (always visible) */}
+        <div className={s.rightGroup}>
+          <div className={`${s.links} ${menuOpen ? s.open : ''}`}>
+            <a href="/#how-it-works" className={s.link} onClick={() => setMenuOpen(false)}>How It Works</a>
+            <a href="/#iqm-guide" className={s.link} onClick={() => setMenuOpen(false)}>IQM Guide</a>
+            <a href="/#references" className={s.link} onClick={() => setMenuOpen(false)}>References</a>
+            <Link to="/compare" className={s.link} onClick={() => setMenuOpen(false)}>Multicenter</Link>
+            <Link to="/analyze" className="btn-primary" style={{ padding: '10px 22px', fontSize: '0.88rem' }}>
+              Launch App
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
+            </Link>
+          </div>
           <ThemeToggle />
-          <Link to="/analyze" className="btn-primary" style={{ padding: '10px 22px', fontSize: '0.88rem' }}>
-            Launch App
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14M12 5l7 7-7 7"/>
-            </svg>
-          </Link>
         </div>
 
         <button

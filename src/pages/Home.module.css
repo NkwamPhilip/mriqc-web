@@ -195,7 +195,7 @@
   font-family: var(--font-display);
   font-size: 1.8rem;
   font-weight: 700;
-  color: var(--teal);
+  color: var(--text);
   line-height: 1;
 }
 
@@ -569,14 +569,17 @@
 
 @media (max-width: 900px) {
   .heroInner { grid-template-columns: 1fr; }
-  /* brain visible on mobile — stacks below the text */
-  .heroRight { display: block; }
+  /* brain FIRST on mobile — more visual impact */
+  .heroRight { display: block; order: -1; }
+  .heroLeft { order: 1; }
   .brainWrapper { max-width: 340px; }
   /* pull badges inward so they don't overflow narrow screens */
   .badge1 { top: 6%; left: 0%; }
   .badge2 { top: 6%; right: 0%; }
   .badge3 { bottom: 16%; left: -1%; }
   .badge4 { bottom: 10%; right: -1%; }
+  /* shrink the "Powered by" badge */
+  .heroBadge { font-size: 0.72rem; padding: 5px 12px; }
   .statsInner { grid-template-columns: repeat(2, 1fr); }
   .stat { border-bottom: 1px solid var(--border); }
   .stat:nth-child(2) { border-right: none; }
@@ -591,14 +594,15 @@
 }
 
 @media (max-width: 600px) {
-  /* Tighten hero so brain is visible without excessive scrolling */
+  /* Tighten hero — brain is now first so it shows immediately */
   .hero {
-    padding-top: calc(var(--nav-height) + 16px);
+    padding-top: calc(var(--nav-height) + 12px);
     padding-bottom: 28px;
     min-height: auto;
   }
-  .heroInner { gap: 24px; }
-  .heroLeft { gap: 16px; }
+  .heroInner { gap: 20px; }
+  .heroLeft { gap: 14px; }
+  .heroBadge { font-size: 0.68rem; padding: 5px 10px; }
   .heroDesc { font-size: 0.95rem; }
   .heroCtas { flex-direction: column; }
   .heroMeta { font-size: 0.7rem; }
