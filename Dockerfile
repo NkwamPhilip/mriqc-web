@@ -30,18 +30,26 @@ RUN pip install --no-cache-dir \
 # ── App code ──────────────────────────────────────────────────────────────────
 WORKDIR /webmriqc
 
-# Copy the combined FastAPI server
+# Combined FastAPI server
 COPY server.py .
 
-# Copy the compiled React frontend
+# Compiled React frontend from stage 1
 COPY --from=frontend /app/dist ./dist
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 EXPOSE 8000
 
-# Increase uvicorn timeout for long MRIQC jobs (up to 2 h)
-CMD ["uvicorn", "server:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--timeout-keep-alive", "7200", \
-     "--workers", "2"]
+# WORKERS env var lets docker-compose (or -e flag) tune concurrency.
+# Default: 2 — one worker can run a long MRIQC job while the second handles
+# new uploads. Raise only if your server has ≥64 GB RAM per extra worker.
+ENV WORKERS=2
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["sh", "-c", \
+     "uvicorn server:app \
+      --host 0.0.0.0 \
+      --port 8000 \
+      --timeout-keep-alive 7200 \
+      --workers ${WORKERS}"]

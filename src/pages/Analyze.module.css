@@ -95,6 +95,35 @@
 
 .stepLineDone { background: var(--teal); }
 
+/* ── Server status banner ──────────────────────────── */
+.serverBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 18px;
+  border-radius: var(--r-md);
+  font-size: 0.88rem;
+  line-height: 1.6;
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+.serverBanner[data-kind="offline"] {
+  background: rgba(239, 68, 68, 0.07);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: var(--text);
+}
+.serverBanner[data-kind="offline"] svg { color: #EF4444; flex-shrink: 0; margin-top: 2px; }
+
+.serverBanner[data-kind="warn"] {
+  background: rgba(245, 158, 11, 0.07);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--text);
+}
+.serverBanner[data-kind="warn"] svg { color: #F59E0B; flex-shrink: 0; margin-top: 2px; }
+
+.serverBanner a { color: var(--teal); text-decoration: underline; text-underline-offset: 2px; }
+
 /* ── Error Banner ──────────────────────────────────── */
 .errorBanner {
   display: flex;

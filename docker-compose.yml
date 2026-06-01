@@ -1,0 +1,83 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WebMRIQC — self-contained deployment
+#
+# Quick start:
+#   docker compose up -d --build
+#
+# Then open  http://<server-ip>:8000  in your browser.
+#
+# Configuration via environment variables (create a .env file or export them):
+#
+#   PORT     Host port the site is reachable on  (default: 8000)
+#   WORKERS  Uvicorn worker processes            (default: 2)
+#            Raise to 3–4 if your server has ≥64 GB RAM and 16+ cores,
+#            but keep low — each MRIQC job can use 8–32 GB RAM.
+#
+# Example .env:
+#   PORT=80
+#   WORKERS=2
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  webmriqc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: webmriqc:latest
+    container_name: webmriqc
+    restart: unless-stopped
+
+    ports:
+      - "${PORT:-8000}:8000"
+
+    environment:
+      - WORKERS=${WORKERS:-2}
+
+    # Mount the host's /tmp/webmriqc so large DICOM/BIDS work dirs live on the
+    # host filesystem instead of the container's overlay layer. This avoids
+    # Docker's overlay storage growing huge and is faster on most Linux systems.
+    volumes:
+      - /tmp/webmriqc:/tmp/webmriqc
+
+    # Allow MRIQC to use shared memory (required by some FSL/ANTs steps)
+    shm_size: "2gb"
+
+    # Soft resource hint — edit to match your server's available RAM.
+    # MRIQC typically needs 8–32 GB per subject. This does NOT hard-limit;
+    # it only informs Docker's scheduling.
+    mem_reservation: "16g"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s   # give time for first-run Docker pulls inside mriqc
+      retries: 5
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTIONAL: uncomment the nginx service below to put a proper reverse proxy in
+# front (useful for HTTPS / SSL, large-file buffering, or running on port 80/443).
+# You also need to provide ssl/cert.pem and ssl/key.pem on the host.
+#
+# See DEPLOY.md → "Adding HTTPS" for a step-by-step guide.
+# ─────────────────────────────────────────────────────────────────────────────
+#  nginx:
+#    image: nginx:1.25-alpine
+#    container_name: webmriqc_nginx
+#    restart: unless-stopped
+#    depends_on:
+#      - webmriqc
+#    ports:
+#      - "80:80"
+#      - "443:443"
+#    volumes:
+#      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+#      - ./ssl:/etc/nginx/ssl:ro

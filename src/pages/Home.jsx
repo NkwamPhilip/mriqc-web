@@ -66,7 +66,7 @@ function HeroSection() {
         <div className={s.heroLeft}>
           <div className={s.heroBadge}>
             <span className={s.heroBadgeDot} />
-            Powered by MAILAB · BIDS Standard · Open Science
+            Powered by MAILAB  · BIDS Standard · Open Science
           </div>
           <h1 className={s.heroTitle}>
             Automated Brain Image<br />

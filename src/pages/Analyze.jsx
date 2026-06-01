@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  checkHealth,
   convertDicomLocally,
   runMRIQC,
   parseBidsZip,
@@ -46,6 +47,42 @@ function useInterval(cb, delay) {
     const id = setInterval(() => ref.current(), delay)
     return () => clearInterval(id)
   }, [delay])
+}
+
+// ── Server status banner ──────────────────────────────────────────────────────
+// 'checking' | 'ok' | 'no-mriqc' | 'offline'
+function ServerBanner({ status }) {
+  if (status === 'checking' || status === 'ok') return null
+
+  if (status === 'offline') return (
+    <div className={s.serverBanner} data-kind="offline">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+      </svg>
+      <div>
+        <strong>Backend server not reachable.</strong>
+        {' '}The analysis pipeline (DICOM→BIDS and MRIQC) runs on a Python/Docker server — it cannot run inside Vercel or any static hosting platform.{' '}
+        <a href="/DEPLOY.md" target="_blank" rel="noopener noreferrer">See the deployment guide →</a>
+      </div>
+    </div>
+  )
+
+  if (status === 'no-mriqc') return (
+    <div className={s.serverBanner} data-kind="warn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <div>
+        <strong>MRIQC is not installed on this server.</strong>
+        {' '}DICOM → BIDS conversion will work, but the MRIQC analysis step will fail.
+        {' '}MRIQC requires the <strong>Docker deployment</strong> on a machine with 16+ GB RAM.{' '}
+        <a href="https://github.com/nipreps/mriqc" target="_blank" rel="noopener noreferrer">Learn more →</a>
+      </div>
+    </div>
+  )
+
+  return null
 }
 
 // ── Step indicator ───────────────────────────────────────────────────────────
@@ -706,6 +743,7 @@ export default function Analyze() {
   const [mriqcElapsed, setMriqcElapsed] = useState('0:00')
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
+  const [serverStatus, setServerStatus] = useState('checking')
 
   const timerRef = useRef(null)
   const fakeRef = useRef(null)
@@ -831,6 +869,16 @@ export default function Analyze() {
 
   useEffect(() => () => stopTimers(), [])
 
+  // Check on mount what the connected server is capable of
+  useEffect(() => {
+    checkHealth()
+      .then((data) => {
+        if (data.mriqc) setServerStatus('ok')
+        else            setServerStatus('no-mriqc')
+      })
+      .catch(() => setServerStatus('offline'))
+  }, [])
+
   const steps    = mode === 'bids' ? STEPS_BIDS    : STEPS_DICOM
   const stepIdx  = mode === 'bids' ? STEP_IDX_BIDS : STEP_IDX_DICOM
 
@@ -854,6 +902,7 @@ export default function Analyze() {
       </div>
 
       <div className={`${s.pageBody} container`}>
+        <ServerBanner status={serverStatus} />
         <StepBar current={step} steps={steps} stepIdx={stepIdx} />
         {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 

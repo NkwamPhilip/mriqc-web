@@ -1,11 +1,47 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# WebMRIQC — Render deployment
+#
+# TWO OPTIONS — uncomment the one that matches your plan:
+#
+# OPTION A  (Python runtime, ~$7/mo)
+#   ✓  React frontend
+#   ✓  DICOM → BIDS conversion
+#   ✗  MRIQC analysis  (requires the Docker option below)
+#
+# OPTION B  (Docker runtime, ~$85–170/mo for the RAM MRIQC needs)
+#   ✓  React frontend
+#   ✓  DICOM → BIDS conversion
+#   ✓  MRIQC analysis
+#
+# For full MRIQC at no extra cost, use the lab's own compute server with Docker:
+#   see DEPLOY.md
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
+
+  # ── OPTION A: Python runtime (no MRIQC) ────────────────────────────────────
   - type: web
-    name: webmriqc-api
+    name: webmriqc
     runtime: python
     buildCommand: bash setup_render.sh
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
-    # Free tier spins down after 15 min idle — fine for testing
-    # Upgrade to "starter" ($7/mo) to keep it alive 24/7
+    # Free tier spins down after 15 min idle.
+    # Upgrade to "starter" ($7/mo) to keep it alive 24/7.
+
+
+  # ── OPTION B: Docker runtime (full MRIQC, needs high-memory plan) ──────────
+  # Uncomment this block and comment out Option A to use the full Docker image.
+  # Requires Render "Pro" plan or higher (8–32 GB RAM) for MRIQC to run.
+  #
+  # - type: web
+  #   name: webmriqc-docker
+  #   runtime: docker
+  #   dockerfilePath: ./Dockerfile
+  #   dockerContext: .
+  #   envVars:
+  #     - key: WORKERS
+  #       value: "1"    # keep low — MRIQC uses 8-32 GB per job
+  #   plan: pro         # minimum for MRIQC; consider "pro-plus" for 32 GB
