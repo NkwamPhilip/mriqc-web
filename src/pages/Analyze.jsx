@@ -471,7 +471,7 @@ function BidsReadyStep({ bidsBlob, bidsFiles, config, onDownload, onContinue, on
 
       <div className={s.navButtons}>
         <button className="btn-outline" onClick={onBack}>← Back</button>
-        <button className="btn-primary" onClick={onContinue}>
+        <button className="btn-primary" onClick={() => onContinue()}>
           Send to MRIQC
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </button>
@@ -824,7 +824,8 @@ export default function Analyze() {
   }
 
   async function handleMRIQC(blobOverride) {
-    const inputBlob = blobOverride ?? bidsBlob
+    // Guard: only use blobOverride if it's an actual Blob/File, not a click event
+    const inputBlob = (blobOverride instanceof Blob) ? blobOverride : bidsBlob
     setError(null)
     setStep('processing')
     setMriqcProgress(5)

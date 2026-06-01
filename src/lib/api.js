@@ -74,8 +74,14 @@ export function convertDicomLocally(file, config, onUploadProgress, onConversion
           resolve(await downloadJobResult(job_id))
         } catch (e) { reject(e) }
       } else {
-        try { reject(new Error(JSON.parse(xhr.responseText).detail || `Server error ${xhr.status}`)) }
-        catch { reject(new Error(`Server error ${xhr.status}`)) }
+        try {
+          const body = JSON.parse(xhr.responseText)
+          const detail = body.detail
+          const msg = Array.isArray(detail)
+            ? detail.map((e) => `${(e.loc || []).join(' → ')}: ${e.msg}`).join('; ')
+            : (detail || `Server error ${xhr.status}`)
+          reject(new Error(msg))
+        } catch { reject(new Error(`Server error ${xhr.status}`)) }
       }
     }
 
@@ -117,8 +123,15 @@ export function runMRIQC(file, config, onUploadProgress) {
           resolve(await downloadJobResult(job_id))
         } catch (e) { reject(e) }
       } else {
-        try { reject(new Error(JSON.parse(xhr.responseText).detail || `Error ${xhr.status}`)) }
-        catch { reject(new Error(`Server error ${xhr.status}`)) }
+        try {
+          const body = JSON.parse(xhr.responseText)
+          const detail = body.detail
+          // FastAPI 422 detail is an array of validation errors — flatten to a string
+          const msg = Array.isArray(detail)
+            ? detail.map((e) => `${(e.loc || []).join(' → ')}: ${e.msg}`).join('; ')
+            : (detail || `Server error ${xhr.status}`)
+          reject(new Error(msg))
+        } catch { reject(new Error(`Server error ${xhr.status}`)) }
       }
     }
 
