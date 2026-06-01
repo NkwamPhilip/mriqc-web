@@ -77,9 +77,9 @@ if ! docker compose version &>/dev/null; then
   exit 1
 fi
 
-# ── Create host temp dir ──────────────────────────────────────────────────────
-sudo mkdir -p /tmp/webmriqc
-sudo chmod 777 /tmp/webmriqc
+# ── Create host temp dirs ─────────────────────────────────────────────────────
+sudo mkdir -p /tmp/webmriqc /tmp/webmriqc_jobs
+sudo chmod 777 /tmp/webmriqc /tmp/webmriqc_jobs
 
 # ── Build and start ───────────────────────────────────────────────────────────
 info "Building image (this downloads ~6 GB on first run — grab a coffee)..."

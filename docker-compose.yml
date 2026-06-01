@@ -40,6 +40,7 @@ services:
     # Docker's overlay storage growing huge and is faster on most Linux systems.
     volumes:
       - /tmp/webmriqc:/tmp/webmriqc
+      - /tmp/webmriqc_jobs:/tmp/webmriqc_jobs
 
     # Allow MRIQC to use shared memory (required by some FSL/ANTs steps)
     shm_size: "2gb"

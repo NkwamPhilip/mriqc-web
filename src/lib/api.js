@@ -28,15 +28,30 @@ async function pollUntilDone(jobId, maxWaitMs = 7_200_000) {
   throw new Error('Job timed out after 2 hours')
 }
 
-// Download the result ZIP for a completed job
+// Download the result ZIP for a completed job.
+// Retries up to 3 times with a 5 s gap — handles the brief server hiccup that
+// can occur right after MRIQC releases its large memory footprint.
 async function downloadJobResult(jobId) {
-  const res = await fetch(`${API}/job/${jobId}/download`)
-  if (!res.ok) {
-    let msg = `Download failed (${res.status})`
-    try { msg = (await res.json()).detail || msg } catch { /* ignore */ }
-    throw new Error(msg)
+  const MAX_TRIES = 3
+  let lastErr
+  for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+    try {
+      const res = await fetch(`${API}/job/${jobId}/download`)
+      if (!res.ok) {
+        let msg = `Download failed (${res.status})`
+        try { msg = (await res.json()).detail || msg } catch { /* ignore */ }
+        throw new Error(msg)
+      }
+      return await res.blob()
+    } catch (err) {
+      lastErr = err
+      if (attempt < MAX_TRIES) {
+        console.warn(`[downloadJobResult] attempt ${attempt} failed (${err.message}), retrying in 5 s…`)
+        await new Promise((r) => setTimeout(r, 5000))
+      }
+    }
   }
-  return res.blob()
+  throw lastErr
 }
 
 // ── DICOM → BIDS ─────────────────────────────────────────────────────────────
