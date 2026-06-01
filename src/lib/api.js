@@ -1,6 +1,6 @@
 // Single API base URL — everything goes to the same server.
 // Set VITE_API_URL at build time (or in .env) to override, e.g.:
-//   VITE_API_URL=https://mriqc.haske.online  npm run build
+//   VITE_API_URL=https://webmriqc.mailab.io  npm run build
 // When the React app is served FROM the same server (Dockerfile), leave it
 // blank — relative paths work automatically.
 const API = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
@@ -11,9 +11,41 @@ export async function checkHealth() {
   return res.json()
 }
 
+// ── Job polling ───────────────────────────────────────────────────────────────
+// Polls /job/{id} every 2 s until the job is done or errors.
+// Works behind Cloudflare and any proxy — each poll completes in milliseconds.
+async function pollUntilDone(jobId, maxWaitMs = 7_200_000) {
+  const deadline = Date.now() + maxWaitMs
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000))
+    const res = await fetch(`${API}/job/${jobId}`)
+    if (!res.ok) throw new Error(`Status check failed (${res.status})`)
+    const data = await res.json()
+    if (data.status === 'done')  return
+    if (data.status === 'error') throw new Error(data.error || 'Processing failed on server')
+    // status === 'running' → keep polling
+  }
+  throw new Error('Job timed out after 2 hours')
+}
+
+// Download the result ZIP for a completed job
+async function downloadJobResult(jobId) {
+  const res = await fetch(`${API}/job/${jobId}/download`)
+  if (!res.ok) {
+    let msg = `Download failed (${res.status})`
+    try { msg = (await res.json()).detail || msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return res.blob()
+}
+
 // ── DICOM → BIDS ─────────────────────────────────────────────────────────────
-// onUploadProgress(pct: 0-100) fires during upload.
-// onConversionStart() fires when the file is received and dcm2bids begins.
+// Flow:
+//   1. XHR uploads the file → onUploadProgress fires (0–100 %)
+//   2. Server saves the upload and returns {job_id} immediately (<1 s)
+//   3. onConversionStart() fires — frontend switches to "Converting" screen
+//   4. pollUntilDone polls every 2 s (each request finishes in <100 ms)
+//   5. downloadJobResult fetches the BIDS ZIP once the job is done
 export function convertDicomLocally(file, config, onUploadProgress, onConversionStart) {
   return new Promise((resolve, reject) => {
     const fd = new FormData()
@@ -30,56 +62,72 @@ export function convertDicomLocally(file, config, onUploadProgress, onConversion
     }
 
     xhr.upload.onloadend = () => {
+      // Upload finished — server is now processing in a background thread
       if (onConversionStart) onConversionStart()
     }
 
-    xhr.onload = () => {
-      if (xhr.status === 200) resolve(xhr.response)
-      else {
+    xhr.onload = async () => {
+      if (xhr.status === 200) {
+        try {
+          const { job_id } = JSON.parse(xhr.responseText)
+          await pollUntilDone(job_id)
+          resolve(await downloadJobResult(job_id))
+        } catch (e) { reject(e) }
+      } else {
         try { reject(new Error(JSON.parse(xhr.responseText).detail || `Server error ${xhr.status}`)) }
         catch { reject(new Error(`Server error ${xhr.status}`)) }
       }
     }
-    xhr.onerror = () => reject(new Error('Cannot reach the server. Is it running?'))
-    xhr.ontimeout = () => reject(new Error('Conversion timed out after 30 minutes'))
+
+    xhr.onerror   = () => reject(new Error('Cannot reach the server. Is it running?'))
+    xhr.ontimeout = () => reject(new Error('Upload timed out after 30 minutes'))
 
     xhr.open('POST', `${API}/convert-dicom`)
-    xhr.responseType = 'blob'
-    xhr.timeout = 1_800_000   // 30 min ceiling
+    xhr.responseType = 'text'    // expecting JSON {job_id}, not a blob
+    xhr.timeout = 1_800_000      // 30 min ceiling for the upload itself
     xhr.send(fd)
   })
 }
 
 // ── MRIQC processing ─────────────────────────────────────────────────────────
+// Same pattern: upload → job_id → poll → download
 export function runMRIQC(file, config, onUploadProgress) {
   return new Promise((resolve, reject) => {
     const fd = new FormData()
     fd.append('bids_zip', file)
-    fd.append('participant_label', config.subjectId)
+    fd.append('participant_label', config.subjectId || '')
     fd.append('modalities', config.modalities.join(' '))
     fd.append('session_id', config.sessionId || '')
     fd.append('n_procs', String(config.nProcs))
     fd.append('mem_gb', String(config.memGb))
 
     const xhr = new XMLHttpRequest()
+
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onUploadProgress) {
         onUploadProgress(Math.round((e.loaded / e.total) * 100))
       }
     }
-    xhr.onload = () => {
-      if (xhr.status === 200) resolve(xhr.response)
-      else {
+
+    xhr.onload = async () => {
+      if (xhr.status === 200) {
+        try {
+          const { job_id } = JSON.parse(xhr.responseText)
+          await pollUntilDone(job_id)
+          resolve(await downloadJobResult(job_id))
+        } catch (e) { reject(e) }
+      } else {
         try { reject(new Error(JSON.parse(xhr.responseText).detail || `Error ${xhr.status}`)) }
         catch { reject(new Error(`Server error ${xhr.status}`)) }
       }
     }
-    xhr.onerror = () => reject(new Error('Network error — check your connection'))
-    xhr.ontimeout = () => reject(new Error('Request timed out after 2 hours'))
+
+    xhr.onerror   = () => reject(new Error('Network error — check your connection'))
+    xhr.ontimeout = () => reject(new Error('Upload timed out'))
 
     xhr.open('POST', `${API}/run-mriqc`)
-    xhr.responseType = 'blob'
-    xhr.timeout = 7_200_000
+    xhr.responseType = 'text'
+    xhr.timeout = 7_200_000      // 2 hr ceiling for the upload
     xhr.send(fd)
   })
 }
