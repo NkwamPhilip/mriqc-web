@@ -30,7 +30,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "${PORT:-8000}:8000"
+      - "${PORT:-8050}:8000"
 
     environment:
       - WORKERS=${WORKERS:-2}
