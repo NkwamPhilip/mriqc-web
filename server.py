@@ -29,13 +29,32 @@ _local_bin = Path(__file__).parent / 'bin'
 if _local_bin.exists():
     os.environ['PATH'] = f"{_local_bin}:{os.environ.get('PATH', '')}"
 
+# ── Also ensure common conda / pip bin dirs are on PATH ──────────────────────
+# nipreps/mriqc uses a conda environment; make sure its bin dir is reachable
+# by subprocesses even if the entrypoint activation was skipped.
+for _conda_bin in [
+    "/opt/conda/bin",
+    "/opt/conda/envs/mriqc/bin",
+    "/usr/local/bin",
+]:
+    if Path(_conda_bin).is_dir() and _conda_bin not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{_conda_bin}:{os.environ['PATH']}"
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 log = logging.getLogger("webmriqc")
+
+# ── Resolve tool paths once at startup ───────────────────────────────────────
+DCM2BIDS_BIN = shutil.which("dcm2bids")
+DCM2NIIX_BIN = shutil.which("dcm2niix")
+MRIQC_BIN    = shutil.which("mriqc")
+log.info("PATH=%s", os.environ.get("PATH", ""))
+log.info("Tool paths → dcm2bids=%s  dcm2niix=%s  mriqc=%s",
+         DCM2BIDS_BIN, DCM2NIIX_BIN, MRIQC_BIN)
 
 app = FastAPI(title="WebMRIQC")
 app.add_middleware(
@@ -145,12 +164,20 @@ def generate_dcm2bids_config(temp_dir: Path) -> Path:
 
 def run_dcm2bids(dicom_dir: Path, bids_out: Path,
                  subj_id: str, ses_id: str, config_file: Path) -> str:
-    cmd = ["dcm2bids", "-d", str(dicom_dir), "-p", subj_id,
+    # Use the resolved absolute path (found at startup) so the subprocess
+    # doesn't rely on PATH being set correctly inside the thread environment.
+    binary = DCM2BIDS_BIN or "dcm2bids"
+    cmd = [binary, "-d", str(dicom_dir), "-p", subj_id,
            "-c", str(config_file), "-o", str(bids_out)]
     if ses_id:
         cmd += ["-s", ses_id]
     log.info("CMD: %s", " ".join(cmd))
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    # Pass explicit env so the subprocess inherits the PATH we set at startup,
+    # including any conda / local-bin entries that were added above.
+    r = subprocess.run(cmd, capture_output=True, text=True,
+                       env=os.environ.copy())
+    log.info("dcm2bids stdout: %s", r.stdout[-2000:] if r.stdout else "(empty)")
+    log.info("dcm2bids stderr: %s", r.stderr[-2000:] if r.stderr else "(empty)")
     out = f"CMD: {' '.join(cmd)}\n\n{r.stdout}\n{r.stderr}".strip()
     if r.returncode != 0:
         raise RuntimeError(f"dcm2bids failed (exit {r.returncode}):\n{r.stderr[-3000:]}")
@@ -239,11 +266,27 @@ def create_bids_top_level_files(bids_dir: Path, subject_id: str):
 @app.get("/health")
 def health():
     return {
-        "ok": True,
-        "dcm2bids": shutil.which("dcm2bids") is not None,
-        "dcm2niix": shutil.which("dcm2niix") is not None,
-        "mriqc":    shutil.which("mriqc")    is not None,
+        "ok":       True,
+        "dcm2bids": DCM2BIDS_BIN is not None,
+        "dcm2niix": DCM2NIIX_BIN is not None,
+        "mriqc":    MRIQC_BIN    is not None,
     }
+
+
+@app.get("/debug/env")
+def debug_env():
+    """Returns PATH and resolved tool locations — useful for diagnosing
+    container environments.  Not sensitive: no secrets are exposed."""
+    return JSONResponse({
+        "PATH":      os.environ.get("PATH", ""),
+        "dcm2bids":  DCM2BIDS_BIN,
+        "dcm2niix":  DCM2NIIX_BIN,
+        "mriqc":     MRIQC_BIN,
+        "python":    shutil.which("python") or shutil.which("python3"),
+        "work_root": str(WORK_ROOT),
+        "job_root":  str(JOB_ROOT),
+        "cwd":       str(Path.cwd()),
+    })
 
 
 # ── Job status + download ─────────────────────────────────────────────────────
@@ -309,10 +352,12 @@ async def convert_dicom(
     job_create(job_id)
 
     def _run():
+        log.info("[%s] Conversion thread started — work_dir=%s", job_id, work_dir)
         try:
-            # Extract
+            # ── Extract ──────────────────────────────────────────────────────
             dicom_dir = work_dir / "dicoms"
-            dicom_dir.mkdir()
+            dicom_dir.mkdir(parents=True, exist_ok=True)
+            log.info("[%s] Extracting ZIP → %s", job_id, dicom_dir)
             try:
                 with zipfile.ZipFile(zip_path) as zf:
                     zf.extractall(dicom_dir)
@@ -321,36 +366,67 @@ async def convert_dicom(
                 shutil.rmtree(work_dir, ignore_errors=True)
                 return
 
-            # Convert
+            # Flatten one extra directory level if the ZIP contained a folder
+            # (e.g. dicom.zip → DICOM/ → *.dcm  becomes  dicom_dir/ → *.dcm)
+            entries = list(dicom_dir.iterdir())
+            if len(entries) == 1 and entries[0].is_dir():
+                inner = entries[0]
+                for f in inner.iterdir():
+                    shutil.move(str(f), str(dicom_dir / f.name))
+                inner.rmdir()
+                log.info("[%s] Flattened ZIP top-level folder '%s'", job_id, inner.name)
+
+            dicom_count = sum(1 for _ in dicom_dir.rglob("*") if _.is_file())
+            log.info("[%s] Extracted %d files", job_id, dicom_count)
+
+            # ── Convert ──────────────────────────────────────────────────────
             bids_out    = work_dir / "bids"
-            bids_out.mkdir()
+            bids_out.mkdir(parents=True, exist_ok=True)
             config_file = generate_dcm2bids_config(work_dir)
+            log.info("[%s] Running dcm2bids (binary=%s) …", job_id, DCM2BIDS_BIN)
             try:
                 conv_log = run_dcm2bids(dicom_dir, bids_out, participant_label, session_id, config_file)
             except FileNotFoundError:
-                job_error(job_id, "dcm2bids not found. Is it installed in this environment?")
+                msg = (
+                    f"dcm2bids executable not found (searched PATH={os.environ.get('PATH','')!r}). "
+                    "Is it installed in this environment?"
+                )
+                log.error("[%s] %s", job_id, msg)
+                job_error(job_id, msg)
                 shutil.rmtree(work_dir, ignore_errors=True)
                 return
             except RuntimeError as e:
+                log.error("[%s] dcm2bids RuntimeError: %s", job_id, e)
                 job_error(job_id, str(e))
                 shutil.rmtree(work_dir, ignore_errors=True)
                 return
 
-            # Organise
+            log.info("[%s] dcm2bids finished OK", job_id)
+
+            # ── Organise ─────────────────────────────────────────────────────
             classify_and_move_original_files(bids_out, participant_label, session_id)
             create_bids_top_level_files(bids_out, participant_label)
             (bids_out / "conversion_log.txt").write_text(conv_log)
 
-            # Package
+            # ── Package ──────────────────────────────────────────────────────
             zip_out = work_dir / "bids_output"
+            log.info("[%s] Archiving BIDS output …", job_id)
             shutil.make_archive(str(zip_out), "zip", root_dir=bids_out)
             job_done(job_id, zip_out.with_suffix(".zip"), f"bids_sub-{participant_label}")
+            # Clean up heavy source files; keep only the result in job dir
+            shutil.rmtree(work_dir, ignore_errors=True)
+            log.info("[%s] Done ✓", job_id)
+
         except Exception as e:
             log.exception("[%s] Unexpected error in conversion thread", job_id)
-            job_error(job_id, f"Conversion failed: {e}")
+            try:
+                job_error(job_id, f"Conversion failed: {e}")
+            except Exception:
+                log.exception("[%s] job_error() itself raised", job_id)
             shutil.rmtree(work_dir, ignore_errors=True)
 
     Thread(target=_run, daemon=True).start()
+    log.info("[%s] Thread dispatched", job_id)
     return {"job_id": job_id}
 
 
@@ -365,7 +441,7 @@ async def run_mriqc_endpoint(
     n_procs:           int = Form(4),
     mem_gb:            int = Form(8),
 ):
-    if not shutil.which("mriqc"):
+    if not MRIQC_BIN:
         raise HTTPException(503, "mriqc is not installed in this environment")
 
     job_id   = str(uuid.uuid4())[:8]
@@ -386,20 +462,33 @@ async def run_mriqc_endpoint(
     job_create(job_id)
 
     def _run():
+        log.info("[%s] MRIQC thread started — work_dir=%s", job_id, work_dir)
         try:
-            # Extract BIDS ZIP
+            # ── Extract BIDS ZIP ──────────────────────────────────────────────
             bids_dir = work_dir / "bids"
-            bids_dir.mkdir()
+            bids_dir.mkdir(parents=True, exist_ok=True)
+            log.info("[%s] Extracting BIDS ZIP → %s", job_id, bids_dir)
             with zipfile.ZipFile(zip_path) as zf:
                 zf.extractall(bids_dir)
 
+            # Flatten one extra directory level if the ZIP had a top-level folder
+            entries = list(bids_dir.iterdir())
+            if len(entries) == 1 and entries[0].is_dir():
+                inner = entries[0]
+                for f in inner.iterdir():
+                    shutil.move(str(f), str(bids_dir / f.name))
+                inner.rmdir()
+                log.info("[%s] Flattened BIDS ZIP top-level folder '%s'", job_id, inner.name)
+
             out_dir    = work_dir / "mriqc_out"
             work_mriqc = work_dir / "mriqc_work"
-            out_dir.mkdir(); work_mriqc.mkdir()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            work_mriqc.mkdir(parents=True, exist_ok=True)
 
-            # Build mriqc command
+            # ── Build mriqc command ───────────────────────────────────────────
+            binary = MRIQC_BIN or "mriqc"
             cmd = [
-                "mriqc",
+                binary,
                 str(bids_dir), str(out_dir),
                 "participant",
                 "--nprocs", str(n_procs),
@@ -418,27 +507,42 @@ async def run_mriqc_endpoint(
                 cmd += ["--session-id", session_id]
 
             log.info("[%s] Running: %s", job_id, " ".join(cmd))
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=7_200)
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=7_200, env=os.environ.copy())
             log.info("[%s] mriqc rc=%d", job_id, r.returncode)
+            if r.stderr:
+                log.info("[%s] mriqc stderr (last 2000): %s", job_id, r.stderr[-2000:])
             if r.returncode != 0:
                 job_error(job_id, f"mriqc failed (exit {r.returncode}):\n{r.stderr[-3000:]}")
                 shutil.rmtree(work_dir, ignore_errors=True)
                 return
 
-            # Package results
+            # ── Package results ───────────────────────────────────────────────
             zip_out = work_dir / "results"
+            log.info("[%s] Archiving MRIQC output …", job_id)
             shutil.make_archive(str(zip_out), "zip", root_dir=out_dir)
             label = f"mriqc_{participant_label}" if participant_label else "mriqc_results"
             job_done(job_id, zip_out.with_suffix(".zip"), label)
+            shutil.rmtree(work_dir, ignore_errors=True)
+            log.info("[%s] MRIQC done ✓", job_id)
+
         except subprocess.TimeoutExpired:
-            job_error(job_id, "mriqc timed out after 2 hours")
+            log.error("[%s] mriqc timed out after 2 hours", job_id)
+            try:
+                job_error(job_id, "mriqc timed out after 2 hours")
+            except Exception:
+                log.exception("[%s] job_error() itself raised", job_id)
             shutil.rmtree(work_dir, ignore_errors=True)
         except Exception as e:
             log.exception("[%s] Unexpected error in MRIQC thread", job_id)
-            job_error(job_id, f"MRIQC failed: {e}")
+            try:
+                job_error(job_id, f"MRIQC failed: {e}")
+            except Exception:
+                log.exception("[%s] job_error() itself raised", job_id)
             shutil.rmtree(work_dir, ignore_errors=True)
 
     Thread(target=_run, daemon=True).start()
+    log.info("[%s] MRIQC thread dispatched", job_id)
     return {"job_id": job_id}
 
 
