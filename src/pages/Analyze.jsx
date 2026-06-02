@@ -10,6 +10,7 @@ import {
   downloadCSV,
   addMulticenterDataset,
 } from '../lib/api'
+import MriqcReport from '../components/MriqcReport'
 import s from './Analyze.module.css'
 
 const STEPS_DICOM = ['Setup', 'Convert', 'BIDS', 'MRIQC', 'Results']
@@ -538,8 +539,8 @@ function ProcessingStep({ progress, statusMsg, elapsed, onCancel }) {
 
 // ── STEP 5: Results ───────────────────────────────────────────────────────────
 function ResultsStep({ results, config, onReset }) {
-  const [activeTab, setActiveTab] = useState('metrics')
-  const [activeReport, setActiveReport] = useState(null)
+  const hasDashboard = results.files.jsonMetrics?.length > 0 || results.files.htmlFiles?.length > 0
+  const [activeTab, setActiveTab] = useState(hasDashboard ? 'dashboard' : 'metrics')
   const [addedToCompare, setAddedToCompare] = useState(false)
   const { blob, files } = results
   const downloadUrl = URL.createObjectURL(blob)
@@ -619,20 +620,35 @@ function ResultsStep({ results, config, onReset }) {
       {/* Tabs */}
       <div className={s.resultsTabs}>
         {[
-          { id: 'metrics', label: `Metrics (${files.tsvFiles.length})` },
-          { id: 'reports', label: `HTML Reports (${files.htmlFiles.length})` },
+          hasDashboard && { id: 'dashboard', label: 'Dashboard' },
+          { id: 'metrics', label: `Metrics${files.tsvFiles.length > 0 ? ` (${files.tsvFiles.length})` : ''}` },
           { id: 'files',   label: `All Files (${files.allPaths.length})` },
-        ].map((t) => (
+        ].filter(Boolean).map((t) => (
           <button key={t.id} className={`${s.resTab} ${activeTab === t.id ? s.resTabActive : ''}`} onClick={() => setActiveTab(t.id)}>
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* Metrics */}
+      {/* Dashboard — custom visual report */}
+      {activeTab === 'dashboard' && (
+        <div className={s.metricsPanel}>
+          <MriqcReport
+            jsonMetrics={files.jsonMetrics}
+            htmlFiles={files.htmlFiles}
+          />
+        </div>
+      )}
+
+      {/* Metrics — TSV tables (kept for backward compat; MRIQC ≥23 may produce them) */}
       {activeTab === 'metrics' && (
         <div className={s.metricsPanel}>
-          {files.tsvFiles.length === 0 && <p className={s.noContent}>No TSV metrics files found in output.</p>}
+          {files.tsvFiles.length === 0 && (
+            <p className={s.noContent}>
+              No TSV metrics files found.
+              {files.jsonMetrics?.length > 0 && ' Switch to the Dashboard tab to view the JSON-based IQM report.'}
+            </p>
+          )}
           {files.tsvFiles.map(({ path, content }) => {
             const { headers, rows } = parseTSV(content)
             return (
@@ -657,34 +673,6 @@ function ResultsStep({ results, config, onReset }) {
                     </tbody>
                   </table>
                 </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Reports */}
-      {activeTab === 'reports' && (
-        <div className={s.reportsPanel}>
-          {files.htmlFiles.length === 0 && <p className={s.noContent}>No HTML reports found.</p>}
-          {files.htmlFiles.map(({ path, content }) => {
-            const name = path.split('/').pop()
-            const open = activeReport === path
-            return (
-              <div key={path}>
-                <button className={`${s.reportItem} ${open ? s.reportItemActive : ''}`} onClick={() => setActiveReport(open ? null : path)}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-                  </svg>
-                  {name}
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                    style={{ marginLeft: 'auto', transform: open ? 'rotate(180deg)' : 'none', transition: '0.2s' }}>
-                    <polyline points="6 9 12 15 18 9"/>
-                  </svg>
-                </button>
-                {open && (
-                  <iframe className={s.reportFrame} srcDoc={content} title={name} sandbox="allow-scripts allow-same-origin" />
-                )}
               </div>
             )
           })}

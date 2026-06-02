@@ -184,7 +184,7 @@ export async function parseBidsZip(blob) {
 export async function parseResultsZip(blob) {
   const JSZip = (await import('jszip')).default
   const zip = await JSZip.loadAsync(blob)
-  const result = { tsvFiles: [], htmlFiles: [], allPaths: [] }
+  const result = { tsvFiles: [], htmlFiles: [], jsonMetrics: [], allPaths: [] }
 
   const entries = Object.entries(zip.files).filter(([, e]) => !e.dir)
   result.allPaths = entries.map(([p]) => p).sort()
@@ -194,8 +194,27 @@ export async function parseResultsZip(blob) {
       result.tsvFiles.push({ path, content: await entry.async('string') })
     } else if (path.endsWith('.html')) {
       result.htmlFiles.push({ path, content: await entry.async('string') })
+    } else if (
+      path.endsWith('.json') &&
+      path.includes('/') &&           // must be inside a sub-directory
+      !path.endsWith('dataset_description.json') &&
+      !path.endsWith('participants.json')
+    ) {
+      // Per-subject IQM JSON: sub-XX/ses-XX/anat/sub-XX_T1w.json
+      try {
+        const text = await entry.async('string')
+        const data = JSON.parse(text)
+        // Identify as IQM file by presence of core metric keys
+        if ('cnr' in data || 'snr_total' in data || 'tsnr' in data || 'efc' in data) {
+          result.jsonMetrics.push({ path, metrics: data })
+        }
+      } catch { /* skip malformed JSON */ }
     }
   }))
+
+  // Sort HTML reports so they match the subject order
+  result.htmlFiles.sort((a, b) => a.path.localeCompare(b.path))
+  result.jsonMetrics.sort((a, b) => a.path.localeCompare(b.path))
 
   return result
 }
