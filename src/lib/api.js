@@ -184,7 +184,7 @@ export async function parseBidsZip(blob) {
 export async function parseResultsZip(blob) {
   const JSZip = (await import('jszip')).default
   const zip = await JSZip.loadAsync(blob)
-  const result = { tsvFiles: [], htmlFiles: [], jsonMetrics: [], allPaths: [] }
+  const result = { tsvFiles: [], htmlFiles: [], jsonMetrics: [], svgFigures: [], allPaths: [] }
 
   const entries = Object.entries(zip.files).filter(([, e]) => !e.dir)
   result.allPaths = entries.map(([p]) => p).sort()
@@ -194,6 +194,10 @@ export async function parseResultsZip(blob) {
       result.tsvFiles.push({ path, content: await entry.async('string') })
     } else if (path.endsWith('.html')) {
       result.htmlFiles.push({ path, content: await entry.async('string') })
+    } else if (path.endsWith('.svg') && path.includes('/figures/')) {
+      // Brain visualisation SVGs written by MRIQC — stored as strings so
+      // the dashboard can create blob URLs and rewrite the HTML iframe.
+      result.svgFigures.push({ path, content: await entry.async('string') })
     } else if (
       path.endsWith('.json') &&
       path.includes('/') &&           // must be inside a sub-directory
@@ -212,9 +216,10 @@ export async function parseResultsZip(blob) {
     }
   }))
 
-  // Sort HTML reports so they match the subject order
+  // Sort everything so they match the subject order
   result.htmlFiles.sort((a, b) => a.path.localeCompare(b.path))
   result.jsonMetrics.sort((a, b) => a.path.localeCompare(b.path))
+  result.svgFigures.sort((a, b) => a.path.localeCompare(b.path))
 
   return result
 }

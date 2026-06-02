@@ -636,6 +636,7 @@ function ResultsStep({ results, config, onReset }) {
           <MriqcReport
             jsonMetrics={files.jsonMetrics}
             htmlFiles={files.htmlFiles}
+            svgFigures={files.svgFigures}
           />
         </div>
       )}

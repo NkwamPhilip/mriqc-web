@@ -3,17 +3,36 @@
  *
  * Renders a rich visual summary from the per-subject JSON metrics that MRIQC
  * writes to  sub-XX/ses-XX/anat/sub-XX_T1w.json  (and BOLD equivalents).
- * Also renders the MRIQC HTML visual reports in a proper iframe using a
- * blob URL so Bootstrap / jQuery load correctly from CDN.
+ *
+ * Brain figures: the SVG files inside sub-XX/figures/ are extracted from the
+ * result ZIP and displayed as an inline image gallery.  The same blob URLs are
+ * injected into the MRIQC HTML report iframe so Bootstrap / jQuery CDN scripts
+ * load correctly AND the brain slice mosaics actually appear.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import s from './MriqcReport.module.css'
+
+// ── Figure catalogue ──────────────────────────────────────────────────────────
+// Defines the display order, human label, and one-line caption for each
+// desc-* figure that MRIQC writes.  Unknown descriptors fall through and are
+// shown at the end with a generic label.
+
+const FIG_DEFS = [
+  { desc: 'background',   label: 'Background View',          caption: 'Enhances the air around the head — artifacts show up here first.' },
+  { desc: 'zoomed',       label: 'Brain Mosaic (Zoomed)',    caption: 'Full brain mosaic — best for checking motion, noise, and signal leakage.' },
+  { desc: 'brainmask',    label: 'Brain Extraction',         caption: 'Brain mask computed by MRIQC. Defects indicate image quality issues.' },
+  { desc: 'segmentation', label: 'Tissue Segmentation',      caption: 'GM / WM / CSF tissue labels — noisy labels flag quality problems.' },
+  { desc: 'norm',         label: 'MNI Registration',         caption: 'Quick nonlinear warp into MNI152NLin2009cAsym space.' },
+  { desc: 'airmask',      label: '"Hat" Mask',               caption: 'Air mask used by MRIQC for noise estimation (excludes eye area).' },
+  { desc: 'noisefit',     label: 'Noise Distribution',       caption: 'Background noise histogram — Rician χ² fit used for QI₁.' },
+  { desc: 'artifacts',    label: 'Background Artifacts',     caption: 'Artifactual intensities detected within the hat mask.' },
+  { desc: 'head',         label: 'Head Mask',                caption: 'Head outline mask computed internally.' },
+]
+const FIG_ORDER = Object.fromEntries(FIG_DEFS.map((d, i) => [d.desc, i]))
 
 // ── Metric definitions ────────────────────────────────────────────────────────
 // dir: +1 = higher is better,  -1 = lower is better
-// thresholds: [good, moderate]  (value at which quality transitions)
-// range: [min, max] used for the visual bar only
 
 const ANAT_DEFS = [
   { key: 'cnr',       label: 'CNR',    desc: 'Contrast-to-Noise Ratio',       dir: +1, th: [2.5, 1.5],   range: [0, 6],   unit: '',   tip: 'GM–WM contrast relative to noise. >2.5 good.' },
@@ -62,6 +81,13 @@ function barPct(val, def) {
 const Q_COLOR  = { good: 'var(--green)', moderate: 'var(--amber)', poor: 'var(--red)', na: 'var(--text-3)' }
 const Q_LABEL  = { good: 'Good', moderate: 'Fair', poor: 'Poor', na: 'N/A' }
 
+// Extract the desc-* part from an MRIQC figure filename.
+// e.g.  sub-01/figures/sub-01_ses-baseline_desc-brainmask_T1w.svg  → 'brainmask'
+function descOf(path) {
+  const m = path.match(/desc-([^_]+)_/)
+  return m ? m[1] : null
+}
+
 // ── MetricCard ────────────────────────────────────────────────────────────────
 
 function MetricCard({ def, value }) {
@@ -69,7 +95,7 @@ function MetricCard({ def, value }) {
   const pct  = barPct(value, def)
   const na   = isNA(value)
   const disp = na ? '—'
-    : `${Number(value).toFixed(2)}${def.unit ? ' ' + def.unit : ''}`
+    : `${Number(value).toFixed(2)}${def.unit ? ' ' + def.unit : ''}`
 
   return (
     <div className={s.metricCard} title={def.tip}>
@@ -116,24 +142,59 @@ function SectionTitle({ icon, children }) {
   )
 }
 
-// ── HTML report iframe using blob URL so Bootstrap/jQuery load from CDN ───────
+// ── FigureCard — one brain visualisation panel ────────────────────────────────
 
-function HtmlFrame({ content, title }) {
+function FigureCard({ label, caption, blobUrl }) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className={`${s.figCard} ${expanded ? s.figCardExpanded : ''}`}>
+      <button className={s.figHeader} onClick={() => setExpanded(e => !e)}>
+        <span className={s.figLabel}>{label}</span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          style={{ flexShrink: 0, transform: expanded ? 'rotate(180deg)' : 'none', transition: '0.2s' }}>
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      {expanded && (
+        <div className={s.figBody}>
+          <img src={blobUrl} alt={label} className={s.figImg} />
+          {caption && <p className={s.figCaption}>{caption}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── HTML report iframe ────────────────────────────────────────────────────────
+// Uses a blob URL so Bootstrap / jQuery load from CDN.
+// svgBlobMap: { 'sub-01/figures/...svg': blobUrl, … } — rewritten into the
+// HTML so the brain slice images actually render inside the iframe.
+
+function HtmlFrame({ content, svgBlobMap, title }) {
   const [url, setUrl] = useState(null)
 
   useEffect(() => {
-    const blob = new Blob([content], { type: 'text/html;charset=utf-8' })
+    // Rewrite every relative ./path/to/file.svg reference in the HTML with
+    // its blob URL so the browser resolves it from the in-memory ZIP entry.
+    let html = content
+    Object.entries(svgBlobMap).forEach(([path, blobUrl]) => {
+      // MRIQC uses both  src="./sub-01/…"  (img) and  data="./sub-01/…"  (object)
+      html = html.replaceAll(`"./${path}"`, `"${blobUrl}"`)
+      html = html.replaceAll(`'./${path}'`, `'${blobUrl}'`)
+    })
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
     const u    = URL.createObjectURL(blob)
     setUrl(u)
     return () => URL.revokeObjectURL(u)
-  }, [content])
+  }, [content, svgBlobMap])
 
   return (
     <iframe
       className={s.htmlFrame}
       src={url ?? 'about:blank'}
       title={title}
-      // allow-popups lets Bootstrap dropdowns & tooltips work
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
     />
   )
@@ -141,9 +202,9 @@ function HtmlFrame({ content, title }) {
 
 // ── Main exported component ───────────────────────────────────────────────────
 
-export default function MriqcReport({ jsonMetrics, htmlFiles }) {
-  const [subjectIdx, setSubjectIdx]   = useState(0)
-  const [openHtml,   setOpenHtml]     = useState(null)
+export default function MriqcReport({ jsonMetrics, htmlFiles, svgFigures }) {
+  const [subjectIdx, setSubjectIdx] = useState(0)
+  const [openHtml,   setOpenHtml]   = useState(null)
 
   // Auto-open first HTML report
   useEffect(() => {
@@ -154,25 +215,20 @@ export default function MriqcReport({ jsonMetrics, htmlFiles }) {
   const m        = subject?.metrics ?? {}
   const meta     = m.bids_meta ?? {}
 
-  // Detect modality from available keys
   const isBold   = m.tsnr !== undefined
   const defs     = isBold ? BOLD_DEFS : ANAT_DEFS
   const modLabel = meta.modality ?? (isBold ? 'BOLD' : 'T1w')
 
-  // Field strength in Tesla (stored as 10000× in some DICOM exports)
-  const rawField  = Number(meta.MagneticFieldStrength)
-  const fieldT    = !isNaN(rawField) && rawField > 0
-    ? (rawField > 100 ? rawField / 10000 : rawField).toFixed(1) + ' T'
+  const rawField = Number(meta.MagneticFieldStrength)
+  const fieldT   = !isNaN(rawField) && rawField > 0
+    ? (rawField > 100 ? rawField / 10000 : rawField).toFixed(1) + ' T'
     : null
 
-  // Scanner label
   const scanner = [meta.Manufacturer, meta.ManufacturersModelName].filter(Boolean).join(' ')
 
-  // Subject / session
   const subId = meta.subject_id ?? subject?.path?.split('/')[0]?.replace('sub-', '') ?? '?'
   const sesId = meta.session_id ?? ''
 
-  // Warnings from provenance
   const warnings = Object.entries(m.provenance?.warnings ?? {})
     .filter(([, v]) => v === true)
     .map(([k]) => k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()))
@@ -185,7 +241,6 @@ export default function MriqcReport({ jsonMetrics, htmlFiles }) {
   ]
   const maxTissue = Math.max(...tissues.map(t => m[t.key] ?? 0), 0.01)
 
-  // SNR by tissue (anat)
   const snrTissues = [
     { label: 'CSF', key: 'snr_csf', color: 'var(--blue)' },
     { label: 'GM',  key: 'snr_gm',  color: 'var(--purple)' },
@@ -193,21 +248,53 @@ export default function MriqcReport({ jsonMetrics, htmlFiles }) {
   ]
   const maxSnr = Math.max(...snrTissues.map(t => m[t.key] ?? 0), 0.01)
 
-  // Acquisition parameter rows
   const acqRows = [
-    { label: 'Matrix',          value: m.size_x && m.size_y ? `${m.size_x} × ${m.size_y}` : null },
+    { label: 'Matrix',          value: m.size_x && m.size_y ? `${m.size_x} × ${m.size_y}` : null },
     { label: 'Slices',          value: m.size_z ?? null },
-    { label: 'Voxel (x/y)',     value: m.spacing_x && m.spacing_y ? `${m.spacing_x.toFixed(3)} × ${m.spacing_y.toFixed(3)} mm` : null },
-    { label: 'Slice thickness', value: meta.SliceThickness != null ? `${meta.SliceThickness} mm` : null },
-    { label: 'Slice gap',       value: meta.SpacingBetweenSlices != null ? `${meta.SpacingBetweenSlices} mm` : null },
-    { label: 'TR',              value: meta.RepetitionTime != null ? `${(meta.RepetitionTime * 1000).toFixed(0)} ms` : null },
-    { label: 'TE',              value: meta.EchoTime != null ? `${(meta.EchoTime * 1000).toFixed(1)} ms` : null },
+    { label: 'Voxel (x/y)',     value: m.spacing_x && m.spacing_y ? `${m.spacing_x.toFixed(3)} × ${m.spacing_y.toFixed(3)} mm` : null },
+    { label: 'Slice thickness', value: meta.SliceThickness != null ? `${meta.SliceThickness} mm` : null },
+    { label: 'Slice gap',       value: meta.SpacingBetweenSlices != null ? `${meta.SpacingBetweenSlices} mm` : null },
+    { label: 'TR',              value: meta.RepetitionTime != null ? `${(meta.RepetitionTime * 1000).toFixed(0)} ms` : null },
+    { label: 'TE',              value: meta.EchoTime != null ? `${(meta.EchoTime * 1000).toFixed(1)} ms` : null },
     { label: 'Flip angle',      value: meta.FlipAngle != null ? `${meta.FlipAngle}°` : null },
     { label: 'Field strength',  value: fieldT },
     { label: 'Sequence',        value: meta.ScanningSequence ?? null },
     { label: 'Protocol',        value: meta.ProtocolName ?? meta.SeriesDescription ?? null },
     { label: 'SAR',             value: meta.SAR != null ? meta.SAR.toFixed(2) : null },
   ].filter(r => r.value != null)
+
+  // ── SVG blob URL map ────────────────────────────────────────────────────────
+  // Create one blob URL per SVG figure and clean them up on unmount / update.
+  // The map is also passed to HtmlFrame so the iframe can resolve the images.
+  const [svgBlobMap, setSvgBlobMap] = useState({})
+
+  useEffect(() => {
+    if (!svgFigures?.length) return
+    const map = {}
+    svgFigures.forEach(({ path, content }) => {
+      const blob = new Blob([content], { type: 'image/svg+xml' })
+      map[path] = URL.createObjectURL(blob)
+    })
+    setSvgBlobMap(map)
+    return () => Object.values(map).forEach(u => URL.revokeObjectURL(u))
+  }, [svgFigures])
+
+  // ── Figures for the selected subject ───────────────────────────────────────
+  // Filter to this subject's SVGs, then sort by canonical FIG_ORDER.
+  const subjectFigs = useMemo(() => {
+    if (!svgFigures?.length || !subId || subId === '?') return []
+    const prefix = `sub-${subId}/`
+    return svgFigures
+      .filter(f => f.path.startsWith(prefix))
+      // If a session is selected, only show that session's figures
+      .filter(f => !sesId || f.path.includes(`_ses-${sesId}_`) || f.path.includes(`ses-${sesId}/`))
+      .map(f => {
+        const desc = descOf(f.path)
+        const def  = FIG_DEFS.find(d => d.desc === desc) ?? { label: desc ?? f.path.split('/').pop(), caption: '' }
+        return { ...f, desc, label: def.label, caption: def.caption, order: FIG_ORDER[desc] ?? 99 }
+      })
+      .sort((a, b) => a.order - b.order)
+  }, [svgFigures, subId, sesId])
 
   if (!subject && (!htmlFiles || htmlFiles.length === 0)) return null
 
@@ -341,10 +428,38 @@ export default function MriqcReport({ jsonMetrics, htmlFiles }) {
               </div>
             </>
           )}
+
+          {/* ── Brain figures (inline SVG gallery) ──────────────────────── */}
+          {subjectFigs.length > 0 && (
+            <>
+              <SectionTitle icon={
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <polyline points="21 15 16 10 5 21"/>
+                </svg>
+              }>
+                Brain Figures
+              </SectionTitle>
+              <p className={s.htmlNote}>
+                Click any panel to expand the brain visualisation. These are the same images shown in the full MRIQC report below.
+              </p>
+              <div className={s.figGrid}>
+                {subjectFigs.map(fig => (
+                  <FigureCard
+                    key={fig.path}
+                    label={fig.label}
+                    caption={fig.caption}
+                    blobUrl={svgBlobMap[fig.path]}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </>
       )}
 
-      {/* ── MRIQC HTML visual reports ────────────────────────────────────── */}
+      {/* ── MRIQC HTML visual reports (full iframe) ──────────────────────── */}
       {htmlFiles && htmlFiles.length > 0 && (
         <>
           <SectionTitle icon={
@@ -353,15 +468,15 @@ export default function MriqcReport({ jsonMetrics, htmlFiles }) {
               <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
             </svg>
           }>
-            MRIQC Visual Reports
+            Full MRIQC Report
           </SectionTitle>
           <p className={s.htmlNote}>
-            Full MRIQC report with brain slice mosaics, IQM plots, and the QC rating widget.
+            Complete MRIQC HTML report with all brain slice mosaics, IQM plots, and the QC rating widget.
           </p>
           <div className={s.htmlList}>
             {htmlFiles.map(({ path, content }) => {
-              const name  = path.split('/').pop()
-              const open  = openHtml === path
+              const name = path.split('/').pop()
+              const open = openHtml === path
               return (
                 <div key={path} className={s.htmlItem}>
                   <button
@@ -376,7 +491,13 @@ export default function MriqcReport({ jsonMetrics, htmlFiles }) {
                       <polyline points="6 9 12 15 18 9"/>
                     </svg>
                   </button>
-                  {open && <HtmlFrame content={content} title={name} />}
+                  {open && (
+                    <HtmlFrame
+                      content={content}
+                      svgBlobMap={svgBlobMap}
+                      title={name}
+                    />
+                  )}
                 </div>
               )
             })}

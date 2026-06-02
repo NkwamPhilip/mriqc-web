@@ -281,6 +281,73 @@
   font-weight: 600;
 }
 
+/* ── Brain figure gallery ──────────────────────────────────────────────────── */
+.figGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+}
+@media (max-width: 680px) {
+  .figGrid { grid-template-columns: 1fr; }
+}
+
+.figCard {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--bg-2);
+  transition: border-color var(--t);
+}
+.figCard:hover { border-color: var(--teal); }
+
+.figCardExpanded {
+  grid-column: 1 / -1;   /* span full row when open */
+}
+
+.figHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--t);
+}
+.figHeader:hover { background: var(--bg-3); }
+.figCardExpanded .figHeader { background: var(--bg-3); }
+
+.figLabel {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.figBody {
+  padding: 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.figImg {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--r-sm);
+  background: #ffffff;  /* MRIQC SVGs have a white canvas */
+}
+
+.figCaption {
+  font-size: 0.7rem;
+  color: var(--text-3);
+  line-height: 1.45;
+  margin: 0;
+}
+
 /* ── HTML report list ──────────────────────────────────────────────────────── */
 .htmlNote {
   font-size: 0.8rem;
