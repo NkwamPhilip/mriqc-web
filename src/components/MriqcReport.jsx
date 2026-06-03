@@ -12,6 +12,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import s from './MriqcReport.module.css'
+import { compareToRef } from '../lib/reference.js'
 
 // ── Figure catalogue ──────────────────────────────────────────────────────────
 // Defines the display order, human label, and one-line caption for each
@@ -97,19 +98,37 @@ function MetricCard({ def, value }) {
   const disp = na ? '—'
     : `${Number(value).toFixed(2)}${def.unit ? ' ' + def.unit : ''}`
 
+  // Reference population comparison
+  const ref        = !na ? compareToRef(def.key, value, def.dir) : null
+  const refBarPct  = ref ? barPct(ref.refMedian, def) : null
+
   return (
     <div className={s.metricCard} title={def.tip}>
       <div className={s.mcTop}>
         <span className={s.mcLabel}>{def.label}</span>
         <span className={s.mcVal} style={{ color: Q_COLOR[q] }}>{disp}</span>
       </div>
+
+      {/* Bar + reference-median tick */}
       <div className={s.mcTrack}>
         <div className={s.mcFill} style={{ width: `${pct}%`, background: Q_COLOR[q] }} />
+        {refBarPct !== null && (
+          <div className={s.mcRefTick} style={{ left: `${refBarPct}%` }} title="Reference median" />
+        )}
       </div>
+
       <div className={s.mcDesc}>{def.desc}</div>
-      <div className={s.mcQ} style={{ color: Q_COLOR[q] }}>
-        <span className={s.mcDot} style={{ background: Q_COLOR[q] }} />
-        {Q_LABEL[q]}
+
+      <div className={s.mcBottom}>
+        <div className={s.mcQ} style={{ color: Q_COLOR[q] }}>
+          <span className={s.mcDot} style={{ background: Q_COLOR[q] }} />
+          {Q_LABEL[q]}
+        </div>
+        {ref && (
+          <span className={s.mcRef} title={`vs. ${ref.refN} OpenNeuro T1w reference scans`}>
+            ↑ {ref.qualityPct}%
+          </span>
+        )}
       </div>
     </div>
   )
