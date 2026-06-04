@@ -551,10 +551,18 @@ async def run_mriqc_endpoint(
 # ══════════════════════════════════════════════════════════════════════════════
 DIST = Path(__file__).parent / "dist"
 if DIST.exists():
+    # Mount the Vite asset bundle (hashed JS/CSS).
     app.mount("/assets", StaticFiles(directory=str(DIST / "assets")), name="assets")
 
     @app.get("/{full_path:path}")
     async def spa(full_path: str):
+        # Serve any file that exists verbatim in dist/ (brain.obj, favicon.svg,
+        # etc.) — this is what the original catch-all missed, causing the browser
+        # to receive index.html instead of the OBJ file.
+        candidate = DIST / full_path
+        if full_path and candidate.exists() and candidate.is_file():
+            return FileResponse(str(candidate))
+        # All unknown paths → SPA index so React Router can handle them.
         return FileResponse(str(DIST / "index.html"))
 
 

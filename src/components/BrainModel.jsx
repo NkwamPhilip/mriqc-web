@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 // ── Depth shader: front faces bright, back faces fade out ─────────────────────
 const VS = `
@@ -119,7 +120,6 @@ export default function BrainModel({ className }) {
         // Merge into one (usually just one group)
         let geo = geos[0]
         if (geos.length > 1) {
-          const { mergeGeometries } = THREE.BufferGeometryUtils
           geo = mergeGeometries(geos)
         }
 
