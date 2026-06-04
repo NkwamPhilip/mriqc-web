@@ -11,6 +11,7 @@ import {
   addMulticenterDataset,
 } from '../lib/api'
 import MriqcReport from '../components/MriqcReport'
+import BrainModel  from '../components/BrainModel'
 import s from './Analyze.module.css'
 
 const STEPS_DICOM = ['Setup', 'Convert', 'BIDS', 'MRIQC', 'Results']
@@ -487,25 +488,19 @@ function ProcessingStep({ progress, statusMsg, elapsed, onCancel }) {
     <div className={s.stepContent}>
       <div className={s.centerPanel}>
         <div className={s.scanWrapper}>
-          <svg className={s.scanBrain} viewBox="0 0 280 280" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="140" cy="140" r="128" stroke="rgba(0,200,180,0.08)" strokeWidth="1"/>
-            <path d="M140,20 C174,18 208,34 232,58 C258,82 270,112 270,144 C270,176 258,206 234,228 C210,252 176,266 140,266 C104,266 70,252 46,228 C22,206 10,176 10,144 C10,112 22,82 46,58 C70,34 106,22 140,20Z"
-              fill="rgba(0,200,180,0.04)" stroke="#00C8B4" strokeWidth="1.3"/>
-            <path d="M140,20 C139,68 138,112 140,160 C142,208 141,248 140,266"
-              stroke="rgba(0,200,180,0.3)" strokeWidth="1.2" strokeDasharray="4,4"/>
-            <ellipse cx="140" cy="140" rx="60" ry="54" fill="rgba(59,130,246,0.06)" stroke="#3B82F6" strokeWidth="1" opacity="0.5"/>
-            <ellipse cx="122" cy="132" rx="17" ry="15" fill="rgba(139,92,246,0.08)" stroke="#8B5CF6" strokeWidth="0.8" opacity="0.6"/>
-            <ellipse cx="158" cy="132" rx="17" ry="15" fill="rgba(139,92,246,0.08)" stroke="#8B5CF6" strokeWidth="0.8" opacity="0.6"/>
-            <path d="M124,143 Q118,135 124,127 Q131,122 140,123 Q149,122 156,127 Q162,135 156,143 Q149,149 140,150 Q131,149 124,143Z"
-              fill="rgba(0,200,180,0.15)" stroke="#00C8B4" strokeWidth="1"/>
-            <circle className={s.ring1} cx="140" cy="143" r="28" fill="none" stroke="#00C8B4" strokeWidth="0.6" strokeDasharray="3,6"/>
-            <circle className={s.ring2} cx="140" cy="143" r="56" fill="none" stroke="#3B82F6" strokeWidth="0.5" strokeDasharray="2,8"/>
-            <circle className={s.ring3} cx="140" cy="143" r="84" fill="none" stroke="#3B82F6" strokeWidth="0.4" strokeDasharray="2,10"/>
-            <path d="M18,18 L30,18 M18,18 L18,30" stroke="rgba(0,200,180,0.45)" strokeWidth="1.3" strokeLinecap="round"/>
-            <path d="M262,18 L250,18 M262,18 L262,30" stroke="rgba(0,200,180,0.45)" strokeWidth="1.3" strokeLinecap="round"/>
-            <path d="M18,262 L30,262 M18,262 L18,250" stroke="rgba(0,200,180,0.45)" strokeWidth="1.3" strokeLinecap="round"/>
-            <path d="M262,262 L250,262 M262,262 L262,250" stroke="rgba(0,200,180,0.45)" strokeWidth="1.3" strokeLinecap="round"/>
+          {/* Live 3-D rotating brain — same component as the home page hero */}
+          <BrainModel className={s.scanBrain} />
+
+          {/* Corner-bracket overlay (pointer-events:none so drag still works) */}
+          <svg viewBox="0 0 280 280" fill="none"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+            <path d="M18,18 L30,18 M18,18 L18,30" stroke="rgba(0,200,180,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
+            <path d="M262,18 L250,18 M262,18 L262,30" stroke="rgba(0,200,180,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
+            <path d="M18,262 L30,262 M18,262 L18,250" stroke="rgba(0,200,180,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
+            <path d="M262,262 L250,262 M262,262 L262,250" stroke="rgba(0,200,180,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
           </svg>
+
+          {/* Horizontal scan-line sweep */}
           <div className={s.scanLineProc} />
         </div>
 

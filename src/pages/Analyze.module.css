@@ -889,15 +889,9 @@
 /* ── Scan animation (Processing step) ──────────────── */
 .scanWrapper {
   position: relative;
-  width: 240px;
-  height: 240px;
+  width: 300px;
+  height: 300px;
 }
-
-.scanBrain { width: 100%; height: 100%; }
-
-.ring1 { animation: dash-rotate 10s linear infinite; }
-.ring2 { animation: dash-rotate 16s linear infinite reverse; }
-.ring3 { animation: dash-rotate 22s linear infinite; }
 
 .scanLineProc {
   position: absolute;
