@@ -34,27 +34,166 @@ const FIG_ORDER = Object.fromEntries(FIG_DEFS.map((d, i) => [d.desc, i]))
 
 // ── Metric definitions ────────────────────────────────────────────────────────
 // dir: +1 = higher is better,  -1 = lower is better
+// th:  [good_threshold, moderate_threshold]
+// papers: peer-reviewed references that establish the threshold / metric
 
 const ANAT_DEFS = [
-  { key: 'cnr',       label: 'CNR',    desc: 'Contrast-to-Noise Ratio',       dir: +1, th: [2.5, 1.5],   range: [0, 6],   unit: '',   tip: 'GM–WM contrast relative to noise. >2.5 good.' },
-  { key: 'snr_total', label: 'SNR',    desc: 'Signal-to-Noise Ratio',          dir: +1, th: [15,  8],     range: [0, 30],  unit: '',   tip: 'Overall signal vs background noise. >15 good.' },
-  { key: 'cjv',       label: 'CJV',    desc: 'Coefficient of Joint Variation', dir: -1, th: [0.5, 0.7],   range: [0, 1.5], unit: '',   tip: 'Intensity variance in GM+WM. <0.5 good.' },
-  { key: 'efc',       label: 'EFC',    desc: 'Entropy Focus Criterion',        dir: -1, th: [0.5, 0.7],   range: [0, 1],   unit: '',   tip: 'Shannon entropy proxy for ghosting. <0.5 good.' },
-  { key: 'fber',      label: 'FBER',   desc: 'Foreground/Background Energy',   dir: +1, th: [100, 30],    range: [0, 300], unit: '',   tip: 'Brain-to-background energy ratio. >100 good. -1 = N/A.' },
-  { key: 'inu_med',   label: 'INU',    desc: 'Intensity Non-Uniformity',       dir: -1, th: [0.05, 0.15], range: [0, 0.4], unit: '',   tip: 'Bias-field median. <0.05 good.' },
-  { key: 'fwhm_avg',  label: 'FWHM',   desc: 'Spatial Blurring (avg)',         dir: -1, th: [2.5, 4.0],   range: [0, 8],   unit: 'mm', tip: 'Average full-width at half-maximum. <2.5 mm good.' },
-  { key: 'wm2max',    label: 'WM2Max', desc: 'White Matter / Max Ratio',       dir: -1, th: [0.4, 0.6],   range: [0, 1],   unit: '',   tip: 'WM mean vs global max. <0.4 good.' },
+  {
+    key: 'cnr', label: 'CNR', desc: 'Contrast-to-Noise Ratio',
+    dir: +1, th: [2.5, 1.5], range: [0, 6], unit: '',
+    tip: 'GM–WM contrast relative to noise. >2.5 good.',
+    longDesc: 'Measures the difference in mean signal intensity between grey matter (GM) and white matter (WM), normalised by the standard deviation of background noise. A higher CNR means tissue types are more easily distinguished, which is critical for accurate segmentation and reliable downstream analyses. Values below 1.5 often indicate a noisy acquisition or significant bias field.',
+    papers: [
+      { authors: 'Esteban O, et al.', year: '2017', title: 'MRIQC: Advancing the automatic prediction of image quality in MRI from unseen sites', journal: 'PLOS ONE', doi: 'https://doi.org/10.1371/journal.pone.0184661' },
+      { authors: 'Magnota VA & Friedman L', year: '2006', title: 'Measurement of signal-to-noise and contrast-to-noise in the fBIRN multicenter imaging study', journal: 'J Digit Imaging', doi: 'https://doi.org/10.1007/s10278-006-0264-x' },
+    ],
+  },
+  {
+    key: 'snr_total', label: 'SNR', desc: 'Signal-to-Noise Ratio',
+    dir: +1, th: [15, 8], range: [0, 30], unit: '',
+    tip: 'Overall signal vs background noise. >15 good.',
+    longDesc: 'The ratio of mean brain signal intensity to the standard deviation of background (air) noise. Higher SNR reflects a cleaner image with less thermal or electronic noise contamination. Values are strongly scanner- and field-strength-dependent — a 1.5T clinical scanner will naturally produce lower SNR than a 3T research system.',
+    papers: [
+      { authors: 'Edelstein WA, et al.', year: '1986', title: 'The intrinsic signal-to-noise ratio in NMR imaging', journal: 'Magn Reson Med', doi: 'https://doi.org/10.1002/mrm.1910030113' },
+      { authors: 'Magnota VA & Friedman L', year: '2006', title: 'Measurement of signal-to-noise and contrast-to-noise in the fBIRN multicenter imaging study', journal: 'J Digit Imaging', doi: 'https://doi.org/10.1007/s10278-006-0264-x' },
+    ],
+  },
+  {
+    key: 'cjv', label: 'CJV', desc: 'Coefficient of Joint Variation',
+    dir: -1, th: [0.5, 0.7], range: [0, 1.5], unit: '',
+    tip: 'Intensity variance in GM+WM. <0.5 good.',
+    longDesc: 'Quantifies the combined spread of intensity values within grey matter and white matter regions. A high CJV indicates poor tissue contrast, significant intensity non-uniformity (bias field), or overlap between the two tissue distributions. It is particularly sensitive to B1 field inhomogeneity and can flag acquisitions that will be difficult to segment reliably.',
+    papers: [
+      { authors: 'Ganzetti M, et al.', year: '2016', title: 'Quantitative evaluation of intensity inhomogeneity correction methods for structural MR brain images', journal: 'Neuroinformatics', doi: 'https://doi.org/10.1007/s12021-015-9277-2' },
+      { authors: 'Esteban O, et al.', year: '2017', title: 'MRIQC: Advancing the automatic prediction of image quality in MRI from unseen sites', journal: 'PLOS ONE', doi: 'https://doi.org/10.1371/journal.pone.0184661' },
+    ],
+  },
+  {
+    key: 'efc', label: 'EFC', desc: 'Entropy Focus Criterion',
+    dir: -1, th: [0.5, 0.7], range: [0, 1], unit: '',
+    tip: 'Shannon entropy proxy for ghosting. <0.5 good.',
+    longDesc: 'Uses the Shannon entropy of the voxel intensity distribution as a proxy for ghosting and blurring. When signal energy leaks into the background — due to head motion, RF ghosting, or poor shimming — the entropy of the image increases. Lower EFC means energy is concentrated within the brain, as expected for a sharp, well-acquired image.',
+    papers: [
+      { authors: 'Atkinson D, et al.', year: '1997', title: 'Automatic correction of motion artifacts in magnetic resonance images using an entropy focus criterion', journal: 'IEEE Trans Med Imaging', doi: 'https://doi.org/10.1109/42.650886' },
+      { authors: 'Esteban O, et al.', year: '2017', title: 'MRIQC: Advancing the automatic prediction of image quality in MRI from unseen sites', journal: 'PLOS ONE', doi: 'https://doi.org/10.1371/journal.pone.0184661' },
+    ],
+  },
+  {
+    key: 'fber', label: 'FBER', desc: 'Foreground/Background Energy Ratio',
+    dir: +1, th: [100, 30], range: [0, 300], unit: '',
+    tip: 'Brain-to-background energy ratio. >100 good. -1 = N/A.',
+    longDesc: 'Compares the sum of squared intensities (energy) inside the brain mask with the energy in the air background. A high ratio indicates that signal is concentrated within the brain, as expected. Low FBER may indicate poor brain masking, a noisy background, or RF leakage. A value of −1 means the metric could not be computed for this scan.',
+    papers: [
+      { authors: 'Shehzad Z, et al.', year: '2015', title: 'The Preprocessed Connectomes Project Quality Assessment Protocol — a resource for measuring the quality of MRI data', journal: 'Front Neurosci', doi: 'https://doi.org/10.3389/conf.fnins.2015.91.00047' },
+    ],
+  },
+  {
+    key: 'inu_med', label: 'INU', desc: 'Intensity Non-Uniformity',
+    dir: -1, th: [0.05, 0.15], range: [0, 0.4], unit: '',
+    tip: 'Bias-field median. <0.05 good.',
+    longDesc: 'Quantifies the smooth, spatially-varying intensity bias introduced by B1 field inhomogeneity in the MRI scanner. Estimated using the N4ITK bias correction algorithm. The median of the estimated bias field is reported — values near zero indicate a uniform field. High INU can cause the same tissue type to appear with different intensities in different parts of the image, degrading segmentation accuracy.',
+    papers: [
+      { authors: 'Tustison NJ, et al.', year: '2010', title: 'N4ITK: Improved N3 Bias Correction', journal: 'IEEE Trans Med Imaging', doi: 'https://doi.org/10.1109/TMI.2010.2046908' },
+      { authors: 'Sled JG, et al.', year: '1998', title: 'A nonparametric method for automatic correction of intensity nonuniformity in MRI data', journal: 'IEEE Trans Med Imaging', doi: 'https://doi.org/10.1109/42.668698' },
+    ],
+  },
+  {
+    key: 'fwhm_avg', label: 'FWHM', desc: 'Spatial Blurring (avg)',
+    dir: -1, th: [2.5, 4.0], range: [0, 8], unit: 'mm',
+    tip: 'Average full-width at half-maximum. <2.5 mm good.',
+    longDesc: 'Estimates the spatial smoothness of the image by measuring the full width at half maximum of the point-spread function. Lower FWHM means a sharper image. The expected value depends strongly on acquisition parameters — a 1 mm isotropic acquisition should show FWHM near 1–2 mm. Higher values suggest blurring from motion, poor shimming, or aggressive reconstruction smoothing.',
+    papers: [
+      { authors: 'Forman SD, et al.', year: '1995', title: 'Improved assessment of significant activation in functional magnetic resonance imaging', journal: 'Magn Reson Med', doi: 'https://doi.org/10.1002/mrm.1910330508' },
+      { authors: 'Jenkinson M', year: '1999', title: 'Measuring transformation error by RMS deviation', journal: 'FMRIB Technical Report', doi: 'https://www.fmrib.ox.ac.uk/datasets/techrep/tr99mj1/tr99mj1.pdf' },
+    ],
+  },
+  {
+    key: 'wm2max', label: 'WM2Max', desc: 'White Matter / Max Ratio',
+    dir: -1, th: [0.4, 0.6], range: [0, 1], unit: '',
+    tip: 'WM mean vs global max. <0.4 good.',
+    longDesc: 'The ratio of the mean white matter signal intensity to the 95th percentile of all brain intensities. Values far outside the typical range can indicate normalisation issues, incorrect scaling, acquisition problems, or the presence of extreme outlier voxels. This metric is used as a sanity check on the dynamic range of the image.',
+    papers: [
+      { authors: 'Esteban O, et al.', year: '2017', title: 'MRIQC: Advancing the automatic prediction of image quality in MRI from unseen sites', journal: 'PLOS ONE', doi: 'https://doi.org/10.1371/journal.pone.0184661' },
+    ],
+  },
 ]
 
 const BOLD_DEFS = [
-  { key: 'tsnr',     label: 'tSNR',  desc: 'Temporal SNR',                 dir: +1, th: [40, 20],    range: [0, 100], unit: '',   tip: 'Temporal signal-to-noise. >40 good for fMRI.' },
-  { key: 'snr',      label: 'SNR',   desc: 'Signal-to-Noise Ratio',        dir: +1, th: [10, 5],     range: [0, 25],  unit: '',   tip: 'Overall signal-to-noise. >10 good.' },
-  { key: 'efc',      label: 'EFC',   desc: 'Entropy Focus Criterion',      dir: -1, th: [0.5, 0.7],  range: [0, 1],   unit: '',   tip: 'Shannon entropy proxy for ghosting. <0.5 good.' },
-  { key: 'fd_mean',  label: 'FD',    desc: 'Mean Framewise Displacement',  dir: -1, th: [0.2, 0.5],  range: [0, 2],   unit: 'mm', tip: 'Mean head motion. <0.2 mm good.' },
-  { key: 'fwhm_avg', label: 'FWHM',  desc: 'Spatial Blurring (avg)',       dir: -1, th: [2.5, 4.0],  range: [0, 8],   unit: 'mm', tip: 'Average FWHM. <2.5 mm good.' },
-  { key: 'aor',      label: 'AOR',   desc: 'AFNI Outlier Ratio',           dir: -1, th: [0.05, 0.1], range: [0, 0.3], unit: '',   tip: 'Fraction of timepoints with outlier signal. <0.05 good.' },
-  { key: 'dvars_std',label: 'DVARS', desc: 'Std DVARS',                    dir: -1, th: [1.0, 1.5],  range: [0, 3],   unit: '',   tip: 'Std DVARS — signal intensity changes. <1 good.' },
-  { key: 'gsr_x',    label: 'GSR-x', desc: 'Ghost-to-Signal Ratio x',     dir: -1, th: [0.01, 0.05],range: [0, 0.2], unit: '',   tip: 'Ghosting in x direction. <0.01 good.' },
+  {
+    key: 'tsnr', label: 'tSNR', desc: 'Temporal SNR',
+    dir: +1, th: [40, 20], range: [0, 100], unit: '',
+    tip: 'Temporal signal-to-noise. >40 good for fMRI.',
+    longDesc: 'Computed as the mean of the fMRI time series divided by its standard deviation, per voxel, then averaged across the brain. tSNR directly reflects the sensitivity of the scanner to detect BOLD-related signal changes. Values below 20 make it very difficult to detect typical 1–3% BOLD signal changes reliably. Higher field strength (3T vs 1.5T) substantially increases tSNR.',
+    papers: [
+      { authors: 'Parrish TB, et al.', year: '2000', title: 'Impact of signal-to-noise on functional MRI', journal: 'Magn Reson Med', doi: 'https://doi.org/10.1002/1522-2594(200007)44:1<925::AID-MRM2>3.0.CO;2-V' },
+      { authors: 'Triantafyllou C, et al.', year: '2005', title: 'Comparison of physiological noise at 1.5T, 3T and 7T and optimization of fMRI acquisition parameters', journal: 'NeuroImage', doi: 'https://doi.org/10.1016/j.neuroimage.2004.12.011' },
+    ],
+  },
+  {
+    key: 'snr', label: 'SNR', desc: 'Signal-to-Noise Ratio',
+    dir: +1, th: [10, 5], range: [0, 25], unit: '',
+    tip: 'Overall signal-to-noise. >10 good.',
+    longDesc: 'The ratio of mean brain signal to background noise standard deviation across the whole fMRI acquisition (computed from the mean volume). Low SNR makes it harder to distinguish BOLD signal changes from noise. Both scanner hardware (coil design, field strength) and acquisition parameters (voxel size, TR) strongly influence SNR.',
+    papers: [
+      { authors: 'Edelstein WA, et al.', year: '1986', title: 'The intrinsic signal-to-noise ratio in NMR imaging', journal: 'Magn Reson Med', doi: 'https://doi.org/10.1002/mrm.1910030113' },
+    ],
+  },
+  {
+    key: 'efc', label: 'EFC', desc: 'Entropy Focus Criterion',
+    dir: -1, th: [0.5, 0.7], range: [0, 1], unit: '',
+    tip: 'Shannon entropy proxy for ghosting. <0.5 good.',
+    longDesc: 'Uses the Shannon entropy of the voxel intensity distribution as a proxy for ghosting and blurring. When signal energy leaks into the background — due to head motion, RF ghosting, or poor shimming — the entropy of the image increases. Computed on the mean fMRI volume.',
+    papers: [
+      { authors: 'Atkinson D, et al.', year: '1997', title: 'Automatic correction of motion artifacts in magnetic resonance images using an entropy focus criterion', journal: 'IEEE Trans Med Imaging', doi: 'https://doi.org/10.1109/42.650886' },
+    ],
+  },
+  {
+    key: 'fd_mean', label: 'FD', desc: 'Mean Framewise Displacement',
+    dir: -1, th: [0.2, 0.5], range: [0, 2], unit: 'mm',
+    tip: 'Mean head motion. <0.2 mm good.',
+    longDesc: 'The average translational head displacement between consecutive fMRI volumes, computed from the 6 rigid-body motion parameters. Even sub-millimetre motion can introduce spin-history and susceptibility artefacts. The 0.2 mm threshold is widely used in connectivity research to define "low-motion" scans; studies consistently show that FD > 0.5 mm significantly distorts functional connectivity estimates.',
+    papers: [
+      { authors: 'Power JD, et al.', year: '2012', title: 'Spurious but systematic correlations in functional connectivity MRI networks arise from subject motion', journal: 'NeuroImage', doi: 'https://doi.org/10.1016/j.neuroimage.2011.10.018' },
+      { authors: 'Jenkinson M, et al.', year: '2002', title: 'Improved optimization for the robust and accurate linear registration and motion correction of brain images', journal: 'NeuroImage', doi: 'https://doi.org/10.1016/S1053-8119(02)91132-8' },
+    ],
+  },
+  {
+    key: 'fwhm_avg', label: 'FWHM', desc: 'Spatial Blurring (avg)',
+    dir: -1, th: [2.5, 4.0], range: [0, 8], unit: 'mm',
+    tip: 'Average FWHM. <2.5 mm good.',
+    longDesc: 'Estimates spatial smoothness of the mean fMRI volume. Excessive blurring reduces the spatial specificity of BOLD activations. Typical fMRI acquisitions (3 mm isotropic) should show FWHM around 3–5 mm after any additional smoothing. Very high values indicate heavy acquisition-level smoothing or motion-induced blurring.',
+    papers: [
+      { authors: 'Forman SD, et al.', year: '1995', title: 'Improved assessment of significant activation in functional magnetic resonance imaging', journal: 'Magn Reson Med', doi: 'https://doi.org/10.1002/mrm.1910330508' },
+    ],
+  },
+  {
+    key: 'aor', label: 'AOR', desc: 'AFNI Outlier Ratio',
+    dir: -1, th: [0.05, 0.1], range: [0, 0.3], unit: '',
+    tip: 'Fraction of timepoints with outlier signal. <0.05 good.',
+    longDesc: 'The mean fraction of voxels per brain volume that AFNI\'s 3dToutcount identifies as outliers (beyond 3.27 standard deviations from the median). High AOR flags temporal instabilities in the scanner or sudden head-motion events, and is a sensitive indicator of poor scan quality even when FD appears acceptable.',
+    papers: [
+      { authors: 'Lemieux L, et al.', year: '2007', title: 'Modelling large motion events in fMRI studies of patients with epilepsy', journal: 'Magn Reson Imaging', doi: 'https://doi.org/10.1016/j.mri.2007.03.009' },
+    ],
+  },
+  {
+    key: 'dvars_std', label: 'DVARS', desc: 'Standardised DVARS',
+    dir: -1, th: [1.0, 1.5], range: [0, 3], unit: '',
+    tip: 'Std DVARS — signal intensity changes. <1 good.',
+    longDesc: 'DVARS (D-temporal variance) measures the rate of change of fMRI signal across the brain from one volume to the next. The standardised version divides by the expected temporal standard deviation so the threshold is scan-independent. Spikes in DVARS identify volumes corrupted by head motion, RF interference, or scanner instabilities, and these volumes are typically excluded (scrubbed) before connectivity analyses.',
+    papers: [
+      { authors: 'Power JD, et al.', year: '2012', title: 'Spurious but systematic correlations in functional connectivity MRI networks arise from subject motion', journal: 'NeuroImage', doi: 'https://doi.org/10.1016/j.neuroimage.2011.10.018' },
+      { authors: 'Nichols TE', year: '2017', title: 'Notes on creating a standardized version of DVARS', journal: 'arXiv', doi: 'https://arxiv.org/abs/1704.01469' },
+    ],
+  },
+  {
+    key: 'gsr_x', label: 'GSR-x', desc: 'Ghost-to-Signal Ratio (x)',
+    dir: -1, th: [0.01, 0.05], range: [0, 0.2], unit: '',
+    tip: 'Ghosting in x direction. <0.01 good.',
+    longDesc: 'Measures the fraction of signal energy appearing as Nyquist ghosting along the phase-encoding (x) direction, relative to the total brain signal. Ghosting arises from eddy currents, motion, or imperfect timing between odd and even EPI echoes. High GSR indicates significant ghost artefacts that can corrupt functional signal in affected regions.',
+    papers: [
+      { authors: 'Giannelli M, et al.', year: '2010', title: 'Characterization of Nyquist ghost in EPI-fMRI acquisition sequences implemented on two clinical 1.5T MR scanner systems', journal: 'Phys Med', doi: 'https://doi.org/10.1016/j.ejmp.2009.10.003' },
+    ],
+  },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -89,9 +228,149 @@ function descOf(path) {
   return m ? m[1] : null
 }
 
+// ── MetricModal — detailed popup when a metric card is clicked ────────────────
+
+function ThresholdScale({ def }) {
+  const [rMin, rMax] = def.range
+  const [good, mod]  = def.th
+  const span = rMax - rMin
+
+  // Convert a value in the metric's range to a % position on the scale bar
+  const pct = v => Math.min(100, Math.max(0, ((v - rMin) / span) * 100))
+
+  // For dir=+1: Good is on the right. For dir=-1: Good is on the left.
+  const goodLeft = def.dir === 1 ? pct(good)  : 0
+  const goodW    = def.dir === 1 ? 100 - pct(good)  : pct(good)
+  const modLeft  = def.dir === 1 ? pct(mod)   : pct(good)
+  const modW     = def.dir === 1 ? pct(good) - pct(mod) : pct(mod) - pct(good)
+  const poorLeft = def.dir === 1 ? 0 : pct(mod)
+  const poorW    = def.dir === 1 ? pct(mod) : 100 - pct(mod)
+
+  const fmtV = v => def.unit ? `${v} ${def.unit}` : String(v)
+
+  return (
+    <div className={s.thScale}>
+      <div className={s.thBar}>
+        <div className={s.thSegPoor} style={{ left: `${poorLeft}%`, width: `${poorW}%` }} />
+        <div className={s.thSegMod}  style={{ left: `${modLeft}%`,  width: `${modW}%`  }} />
+        <div className={s.thSegGood} style={{ left: `${goodLeft}%`, width: `${goodW}%` }} />
+        {/* Threshold markers */}
+        <div className={s.thMarker}  style={{ left: `${pct(mod)}%`  }}>
+          <div className={s.thMarkerLine} />
+          <span className={s.thMarkerVal}>{fmtV(mod)}</span>
+        </div>
+        <div className={s.thMarker}  style={{ left: `${pct(good)}%` }}>
+          <div className={s.thMarkerLine} />
+          <span className={s.thMarkerVal}>{fmtV(good)}</span>
+        </div>
+      </div>
+      <div className={s.thLabels}>
+        {def.dir === 1
+          ? <><span style={{color:'var(--red)'}}>● Poor</span><span style={{color:'var(--amber)'}}>● Fair</span><span style={{color:'var(--green)'}}>● Good</span></>
+          : <><span style={{color:'var(--green)'}}>● Good</span><span style={{color:'var(--amber)'}}>● Fair</span><span style={{color:'var(--red)'}}>● Poor</span></>
+        }
+      </div>
+      <div className={s.thHint}>
+        {def.dir === 1
+          ? `Higher is better — Good ≥ ${fmtV(good)}, Fair ${fmtV(mod)}–${fmtV(good)}, Poor < ${fmtV(mod)}`
+          : `Lower is better — Good ≤ ${fmtV(good)}, Fair ${fmtV(good)}–${fmtV(mod)}, Poor > ${fmtV(mod)}`
+        }
+      </div>
+    </div>
+  )
+}
+
+function MetricModal({ def, value, onClose }) {
+  const q    = qualityLevel(value, def)
+  const na   = isNA(value)
+  const disp = na ? '—' : `${Number(value).toFixed(4)}${def.unit ? ' ' + def.unit : ''}`
+  const ref  = !na ? compareToRef(def.key, value, def.dir) : null
+
+  // Close on overlay click or Escape
+  const onKey = e => { if (e.key === 'Escape') onClose() }
+
+  return (
+    <div className={s.modalOverlay} onClick={onClose} onKeyDown={onKey} tabIndex={-1}>
+      <div className={s.modal} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+
+        {/* Header */}
+        <div className={s.modalHead}>
+          <div>
+            <span className={s.modalLabel}>{def.label}</span>
+            <span className={s.modalFullName}>{def.desc}</span>
+          </div>
+          <button className={s.modalClose} onClick={onClose} aria-label="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Your value */}
+        <div className={s.modalValue}>
+          <span className={s.modalValNum} style={{ color: Q_COLOR[q] }}>{disp}</span>
+          <span className={s.modalBadge} style={{ background: Q_COLOR[q] + '22', color: Q_COLOR[q] }}>
+            <span className={s.mcDot} style={{ background: Q_COLOR[q] }} />
+            {Q_LABEL[q]}
+          </span>
+          {ref && (
+            <span className={s.modalRef}>
+              Better than {ref.qualityPct}% of {ref.refN} reference scans
+            </span>
+          )}
+        </div>
+
+        {/* What it measures */}
+        <div className={s.modalSection}>
+          <div className={s.modalSectionTitle}>What it measures</div>
+          <p className={s.modalBody}>{def.longDesc}</p>
+        </div>
+
+        {/* Threshold scale */}
+        <div className={s.modalSection}>
+          <div className={s.modalSectionTitle}>Quality thresholds</div>
+          <ThresholdScale def={def} />
+        </div>
+
+        {/* Papers */}
+        {def.papers?.length > 0 && (
+          <div className={s.modalSection}>
+            <div className={s.modalSectionTitle}>Key references</div>
+            <ul className={s.paperList}>
+              {def.papers.map((p, i) => (
+                <li key={i} className={s.paperItem}>
+                  <div className={s.paperMeta}>
+                    <span className={s.paperAuthors}>{p.authors}</span>
+                    <span className={s.paperYear}>({p.year})</span>
+                  </div>
+                  <div className={s.paperTitle}>{p.title}</div>
+                  <div className={s.paperJournal}>
+                    <em>{p.journal}</em>
+                    {p.doi && (
+                      <a href={p.doi} target="_blank" rel="noreferrer" className={s.paperDoi}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                          <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                        </svg>
+                        View paper
+                      </a>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── MetricCard ────────────────────────────────────────────────────────────────
 
 function MetricCard({ def, value }) {
+  const [showModal, setShowModal] = useState(false)
+
   const q    = qualityLevel(value, def)
   const pct  = barPct(value, def)
   const na   = isNA(value)
@@ -103,34 +382,53 @@ function MetricCard({ def, value }) {
   const refBarPct  = ref ? barPct(ref.refMedian, def) : null
 
   return (
-    <div className={s.metricCard} title={def.tip}>
-      <div className={s.mcTop}>
-        <span className={s.mcLabel}>{def.label}</span>
-        <span className={s.mcVal} style={{ color: Q_COLOR[q] }}>{disp}</span>
-      </div>
-
-      {/* Bar + reference-median tick */}
-      <div className={s.mcTrack}>
-        <div className={s.mcFill} style={{ width: `${pct}%`, background: Q_COLOR[q] }} />
-        {refBarPct !== null && (
-          <div className={s.mcRefTick} style={{ left: `${refBarPct}%` }} title="Reference median" />
-        )}
-      </div>
-
-      <div className={s.mcDesc}>{def.desc}</div>
-
-      <div className={s.mcBottom}>
-        <div className={s.mcQ} style={{ color: Q_COLOR[q] }}>
-          <span className={s.mcDot} style={{ background: Q_COLOR[q] }} />
-          {Q_LABEL[q]}
+    <>
+      <div className={`${s.metricCard} ${s.metricCardClickable}`}
+        onClick={() => setShowModal(true)}
+        role="button" tabIndex={0}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setShowModal(true) }}
+        title="Click for details and references"
+      >
+        <div className={s.mcTop}>
+          <span className={s.mcLabel}>{def.label}</span>
+          <span className={s.mcVal} style={{ color: Q_COLOR[q] }}>{disp}</span>
         </div>
-        {ref && (
-          <span className={s.mcRef} title={`vs. ${ref.refN} OpenNeuro T1w reference scans`}>
-            ↑ {ref.qualityPct}%
-          </span>
-        )}
+
+        {/* Bar + reference-median tick */}
+        <div className={s.mcTrack}>
+          <div className={s.mcFill} style={{ width: `${pct}%`, background: Q_COLOR[q] }} />
+          {refBarPct !== null && (
+            <div className={s.mcRefTick} style={{ left: `${refBarPct}%` }} title="Reference median" />
+          )}
+        </div>
+
+        <div className={s.mcDesc}>{def.desc}</div>
+
+        <div className={s.mcBottom}>
+          <div className={s.mcQ} style={{ color: Q_COLOR[q] }}>
+            <span className={s.mcDot} style={{ background: Q_COLOR[q] }} />
+            {Q_LABEL[q]}
+          </div>
+          {ref && (
+            <span className={s.mcRef} title={`vs. ${ref.refN} OpenNeuro T1w reference scans`}>
+              ↑ {ref.qualityPct}%
+            </span>
+          )}
+        </div>
+
+        {/* "Click for details" hint */}
+        <div className={s.mcHint}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          Details &amp; references
+        </div>
       </div>
-    </div>
+
+      {showModal && (
+        <MetricModal def={def} value={value} onClose={() => setShowModal(false)} />
+      )}
+    </>
   )
 }
 
