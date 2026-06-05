@@ -11,9 +11,11 @@ version: "3.9"
 # Configuration via environment variables (create a .env file or export them):
 #
 #   PORT             Host port the site is reachable on  (default: 8050)
-#   WORKERS          Uvicorn worker processes            (default: 2)
-#                    Raise to 3–4 if your server has ≥64 GB RAM / 16+ cores,
-#                    but keep low — each MRIQC job can use 8–32 GB RAM.
+#   WORKERS          Uvicorn worker processes            (default: 16)
+#                    Set to roughly 2× the number of concurrent users you
+#                    expect.  MRIQC jobs run in background threads, so
+#                    workers only need to handle HTTP — 16 is plenty for a
+#                    continental-scale deployment on the scalar server.
 #
 #   GEMINI_API_KEY   Free AI chatbot key from https://aistudio.google.com/app/apikey
 #
@@ -26,7 +28,8 @@ version: "3.9"
 #
 # Create a .env file next to this file (it is gitignored):
 #   PORT=8050
-#   WORKERS=2
+#   WORKERS=16
+#   MAX_CONCURRENT_JOBS=16
 #   GEMINI_API_KEY=AIzaSy...
 #   SUPPORT_EMAIL=info@mailab.io
 #   SMTP_USER=you@gmail.com
@@ -46,7 +49,11 @@ services:
       - "${PORT:-8050}:8000"
 
     environment:
-      - WORKERS=${WORKERS:-2}
+      # ── Web server ────────────────────────────────────────────────────────
+      - WORKERS=${WORKERS:-16}
+      # ── Job queue (tuned for 384-CPU / 1.5 TB scalar server) ─────────────
+      - MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS:-16}
+      - MAX_QUEUE_SIZE=${MAX_QUEUE_SIZE:-100}
       # ── AI chatbot (Google Gemini free tier) ──────────────────────────────
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       # ── Support ticket email ──────────────────────────────────────────────
@@ -63,13 +70,14 @@ services:
       - /tmp/webmriqc:/tmp/webmriqc
       - /tmp/webmriqc_jobs:/tmp/webmriqc_jobs
 
-    # Allow MRIQC to use shared memory (required by some FSL/ANTs steps)
-    shm_size: "2gb"
+    # Shared memory for FSL/ANTs parallel steps.
+    # 16 concurrent jobs × ~1 GB shm each → 16 GB minimum; 64 GB is generous.
+    shm_size: "64gb"
 
-    # Soft resource hint — edit to match your server's available RAM.
-    # MRIQC typically needs 8–32 GB per subject. This does NOT hard-limit;
-    # it only informs Docker's scheduling.
-    mem_reservation: "16g"
+    # Soft resource hint to Docker's scheduler.
+    # With 16 jobs × 64 GB each the container needs up to ~1 TB.
+    # Does NOT hard-limit — the kernel can use more if available.
+    mem_reservation: "1000g"
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

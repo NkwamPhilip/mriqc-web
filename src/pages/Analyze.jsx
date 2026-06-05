@@ -274,7 +274,7 @@ function SetupStep({ file, onFile, config, onChange, onNext, mode, onModeChange 
             <label className={s.label}>CPU Cores</label>
             <div className={s.selectWrap}>
               <select className={s.select} value={config.nProcs} onChange={(e) => onChange('nProcs', Number(e.target.value))}>
-                {[4, 8, 12, 16].map((n) => <option key={n} value={n}>{n} cores</option>)}
+                {[8, 16, 18, 24, 32].map((n) => <option key={n} value={n}>{n} cores</option>)}
               </select>
             </div>
           </div>
@@ -282,7 +282,7 @@ function SetupStep({ file, onFile, config, onChange, onNext, mode, onModeChange 
             <label className={s.label}>Memory (GB)</label>
             <div className={s.selectWrap}>
               <select className={s.select} value={config.memGb} onChange={(e) => onChange('memGb', Number(e.target.value))}>
-                {[16, 32, 48, 64].map((n) => <option key={n} value={n}>{n} GB</option>)}
+                {[32, 64, 96, 128].map((n) => <option key={n} value={n}>{n} GB</option>)}
               </select>
             </div>
           </div>
@@ -762,7 +762,7 @@ export default function Analyze() {
   const [step, setStep] = useState('setup')
   const [mode, setMode] = useState('dicom')   // 'dicom' | 'bids'
   const [dicomFile, setDicomFile] = useState(null)
-  const [config, setConfig] = useState({ subjectId: '01', sessionId: 'baseline', modalities: ['T1w'], nProcs: 4, memGb: 16 })
+  const [config, setConfig] = useState({ subjectId: '01', sessionId: 'baseline', modalities: ['T1w'], nProcs: 18, memGb: 64 })
   const [bidsBlob, setBidsBlob] = useState(null)
   const [bidsFiles, setBidsFiles] = useState(null)
   const [convPhase, setConvPhase] = useState('uploading')
