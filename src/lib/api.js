@@ -14,16 +14,38 @@ export async function checkHealth() {
 // ── Job polling ───────────────────────────────────────────────────────────────
 // Polls /job/{id} every 2 s until the job is done or errors.
 // Works behind Cloudflare and any proxy — each poll completes in milliseconds.
-async function pollUntilDone(jobId, maxWaitMs = 7_200_000) {
+//
+// onStatusUpdate(info) — optional callback fired on every queued / running
+// transition so the UI can show a live ticket or "running" indicator.
+//   info: { status:'queued', queue_position, total_queued, estimated_wait_min }
+//       | { status:'running' }
+//       | null  (cleared when the job finishes)
+async function pollUntilDone(jobId, maxWaitMs = 7_200_000, onStatusUpdate = null) {
   const deadline = Date.now() + maxWaitMs
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2000))
     const res = await fetch(`${API}/job/${jobId}`)
     if (!res.ok) throw new Error(`Status check failed (${res.status})`)
     const data = await res.json()
+
+    if (data.status === 'queued') {
+      onStatusUpdate?.({
+        status:             'queued',
+        queue_position:     data.queue_position,
+        total_queued:       data.total_queued,
+        estimated_wait_min: data.estimated_wait_min,
+        active_jobs:        data.active_jobs,
+      })
+      continue  // keep polling — don't count this as wasted time
+    }
+
+    if (data.status === 'running') {
+      onStatusUpdate?.({ status: 'running' })
+      // fall through — keep polling until done
+    }
+
     if (data.status === 'done')  return
     if (data.status === 'error') throw new Error(data.error || 'Processing failed on server')
-    // status === 'running' → keep polling
   }
   throw new Error('Job timed out after 2 hours')
 }
@@ -112,7 +134,9 @@ export function convertDicomLocally(file, config, onUploadProgress, onConversion
 
 // ── MRIQC processing ─────────────────────────────────────────────────────────
 // Same pattern: upload → job_id → poll → download
-export function runMRIQC(file, config, onUploadProgress) {
+// onStatusUpdate is forwarded straight to pollUntilDone so the UI can display
+// live queue position while waiting for a compute slot.
+export function runMRIQC(file, config, onUploadProgress, onStatusUpdate) {
   return new Promise((resolve, reject) => {
     const fd = new FormData()
     fd.append('bids_zip', file)
@@ -134,7 +158,7 @@ export function runMRIQC(file, config, onUploadProgress) {
       if (xhr.status === 200) {
         try {
           const { job_id } = JSON.parse(xhr.responseText)
-          await pollUntilDone(job_id)
+          await pollUntilDone(job_id, undefined, onStatusUpdate)
           resolve(await downloadJobResult(job_id))
         } catch (e) { reject(e) }
       } else {

@@ -21,8 +21,9 @@ Or locally (with a venv that has dcm2bids + mriqc installed):
 """
 
 import json, os, uuid, shutil, zipfile, logging, datetime, subprocess
+from collections import deque
 from pathlib import Path
-from threading import Thread
+from threading import Thread, Lock
 
 # ── Make locally-downloaded binaries (Render test deployment) findable ────────
 _local_bin = Path(__file__).parent / 'bin'
@@ -78,13 +79,122 @@ WORK_ROOT.mkdir(parents=True, exist_ok=True)
 JOB_ROOT = Path("/tmp/webmriqc_jobs")
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Job queue  (MRIQC only — DICOM/BIDS conversion is lightweight, runs direct)
+#
+# MAX_CONCURRENT_JOBS — how many MRIQC runs can execute in parallel.
+#   Default 1.  Raise only if the server has ≥ 20 GB of free RAM per extra
+#   worker (MRIQC uses 8-16 GB and many CPU cores per participant).
+#
+# MAX_QUEUE_SIZE — maximum users allowed to wait.  Requests beyond this are
+#   rejected immediately with HTTP 503 and a friendly message.
+# ══════════════════════════════════════════════════════════════════════════════
+
+MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "1"))
+MAX_QUEUE_SIZE      = int(os.environ.get("MAX_QUEUE_SIZE",      "20"))
+
+# Approximate processing time per job in minutes — used for wait estimates.
+# Adjust upward if your MRIQC typically runs longer (e.g. whole-brain fMRI).
+_EST_MINUTES_PER_JOB = 10
+
+_q_lock  : Lock          = Lock()
+_active  : set[str]      = set()   # job_ids currently running MRIQC
+_pending : deque         = deque() # deque of (job_id, runner_callable)
+
+
+def _q_enqueue(job_id: str, runner) -> bool:
+    """
+    Try to run job_id immediately; queue it if the server is at capacity.
+    Returns True if the job was queued (not yet started), False if started now.
+    Raises ValueError if the queue is full.
+    """
+    with _q_lock:
+        if len(_active) < MAX_CONCURRENT_JOBS:
+            _active.add(job_id)
+            Thread(target=runner, daemon=True).start()
+            return False
+        if len(_pending) >= MAX_QUEUE_SIZE:
+            raise ValueError(
+                f"The server queue is full ({MAX_QUEUE_SIZE} jobs waiting). "
+                "Please try again in a few hours."
+            )
+        _pending.append((job_id, runner))
+        log.info("[queue] Job %s queued at position %d", job_id, len(_pending))
+        return True
+
+
+def _q_release(job_id: str):
+    """
+    Called by a finishing MRIQC thread to release its compute slot and hand
+    off to the next waiting job (if any).
+    """
+    with _q_lock:
+        _active.discard(job_id)
+        if _pending and len(_active) < MAX_CONCURRENT_JOBS:
+            next_id, next_runner = _pending.popleft()
+            _active.add(next_id)
+            log.info("[queue] Promoting job %s from queue → active", next_id)
+            Thread(target=next_runner, daemon=True).start()
+
+
+def _q_cancel(job_id: str) -> bool:
+    """Remove a queued job before it starts. Returns True if removed."""
+    with _q_lock:
+        before = len(_pending)
+        new_q  = deque((jid, fn) for jid, fn in _pending if jid != job_id)
+        _pending.clear()
+        _pending.extend(new_q)
+        return len(_pending) < before
+
+
+def _q_status(job_id: str) -> dict | None:
+    """
+    Return live queue/run state for job_id, or None if it's not in memory.
+    Callers should fall through to the file-based sentinels (done / error.txt)
+    when this returns None.
+    """
+    with _q_lock:
+        if job_id in _active:
+            return {
+                "status":         "running",
+                "queue_position": 0,
+                "total_queued":   len(_pending),
+                "active_jobs":    len(_active),
+            }
+        pending_ids = [jid for jid, _ in _pending]
+        if job_id in pending_ids:
+            pos  = pending_ids.index(job_id) + 1   # 1-based
+            total = len(_pending)
+            return {
+                "status":              "queued",
+                "queue_position":      pos,
+                "total_queued":        total,
+                "estimated_wait_min":  pos * _EST_MINUTES_PER_JOB,
+                "active_jobs":         len(_active),
+            }
+    return None
+
+
+def _q_snapshot() -> dict:
+    """Return a queue health snapshot for /health."""
+    with _q_lock:
+        return {
+            "active":          len(_active),
+            "pending":         len(_pending),
+            "max_concurrent":  MAX_CONCURRENT_JOBS,
+            "max_queue":       MAX_QUEUE_SIZE,
+            "busy":            len(_active) >= MAX_CONCURRENT_JOBS,
+        }
+
 
 def _jdir(job_id: str) -> Path:
     return JOB_ROOT / job_id
 
-def job_create(job_id: str):
+def job_create(job_id: str, running: bool = True):
+    """Create the job directory. Set running=False for queued jobs."""
     _jdir(job_id).mkdir(parents=True, exist_ok=True)
-    (_jdir(job_id) / "running").touch()
+    if running:
+        (_jdir(job_id) / "running").touch()
 
 def job_done(job_id: str, result_zip: Path, label: str = ""):
     dest = _jdir(job_id) / "result.zip"
@@ -270,7 +380,17 @@ def health():
         "dcm2bids": DCM2BIDS_BIN is not None,
         "dcm2niix": DCM2NIIX_BIN is not None,
         "mriqc":    MRIQC_BIN    is not None,
+        "queue":    _q_snapshot(),
     }
+
+
+@app.delete("/job/{job_id}")
+def cancel_job(job_id: str):
+    """Remove a queued (not yet started) job from the waiting list."""
+    removed = _q_cancel(job_id)
+    if removed:
+        job_error(job_id, "Cancelled by user before processing started")
+    return {"cancelled": removed}
 
 
 @app.get("/debug/env")
@@ -293,6 +413,11 @@ def debug_env():
 
 @app.get("/job/{job_id}")
 def get_job_status(job_id: str):
+    # In-memory queue state is authoritative for queued / running jobs.
+    qs = _q_status(job_id)
+    if qs:
+        return qs
+    # Fall through to persistent file sentinels for done / error.
     st = job_status(job_id)
     if st is None:
         raise HTTPException(404, "Job not found")
@@ -459,9 +584,12 @@ async def run_mriqc_endpoint(
         shutil.rmtree(work_dir, ignore_errors=True)
         raise HTTPException(500, f"Upload failed: {e}")
 
-    job_create(job_id)
+    # Don't touch the "running" sentinel yet — the job may be queued first.
+    job_create(job_id, running=False)
 
     def _run():
+        # Mark as running only now, when the compute slot has been granted.
+        (_jdir(job_id) / "running").touch()
         log.info("[%s] MRIQC thread started — work_dir=%s", job_id, work_dir)
         try:
             # ── Extract BIDS ZIP ──────────────────────────────────────────────
@@ -541,8 +669,25 @@ async def run_mriqc_endpoint(
                 log.exception("[%s] job_error() itself raised", job_id)
             shutil.rmtree(work_dir, ignore_errors=True)
 
-    Thread(target=_run, daemon=True).start()
-    log.info("[%s] MRIQC thread dispatched", job_id)
+    # Wrap _run so the compute slot is released (and the next queued job
+    # promoted) when this job finishes — whether it succeeds or fails.
+    def _run_and_release():
+        try:
+            _run()
+        finally:
+            _q_release(job_id)
+
+    try:
+        queued = _q_enqueue(job_id, _run_and_release)
+    except ValueError as exc:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise HTTPException(503, str(exc))
+
+    if queued:
+        log.info("[%s] MRIQC job queued (pending=%d)", job_id, len(_pending))
+    else:
+        log.info("[%s] MRIQC thread dispatched immediately", job_id)
+
     return {"job_id": job_id}
 
 

@@ -483,7 +483,9 @@ function BidsReadyStep({ bidsBlob, bidsFiles, config, onDownload, onContinue, on
 }
 
 // ── STEP 4: MRIQC Processing ──────────────────────────────────────────────────
-function ProcessingStep({ progress, statusMsg, elapsed, onCancel }) {
+function ProcessingStep({ progress, statusMsg, elapsed, queueInfo, onCancel }) {
+  const isQueued = !!queueInfo && queueInfo.status === 'queued'
+
   return (
     <div className={s.stepContent}>
       <div className={s.centerPanel}>
@@ -504,15 +506,57 @@ function ProcessingStep({ progress, statusMsg, elapsed, onCancel }) {
           <div className={s.scanLineProc} />
         </div>
 
-        <div className={s.convLabel}>MRIQC Processing on Server</div>
+        <div className={s.convLabel}>
+          {isQueued ? 'Waiting for a Compute Slot' : 'MRIQC Processing on Server'}
+        </div>
 
+        {/* ── Queue ticket card ─────────────────────────────────── */}
+        {isQueued && (
+          <div className={s.queueCard}>
+            <div className={s.queueTop}>
+              {/* Ticket badge */}
+              <div className={s.queueBadge}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2z"/>
+                </svg>
+                Queue Ticket
+              </div>
+              <div className={s.queuePos}>#{queueInfo.queue_position}</div>
+            </div>
+
+            {/* Queue position bar */}
+            <div className={s.queueTrack}>
+              <div className={s.queueFill}
+                style={{ width: `${Math.max(4, (1 / Math.max(queueInfo.total_queued + 1, 1)) * 100)}%` }}
+              />
+            </div>
+
+            <div className={s.queueMeta}>
+              <span>
+                <strong>{queueInfo.queue_position - 1}</strong>
+                {queueInfo.queue_position - 1 === 1 ? ' job' : ' jobs'} ahead
+              </span>
+              <span className={s.queueEst}>
+                ~{queueInfo.estimated_wait_min} min estimated wait
+              </span>
+            </div>
+
+            <p className={s.queueNote}>
+              Your job is reserved. The server will start it automatically — keep this tab open.
+            </p>
+          </div>
+        )}
+
+        {/* ── Regular progress (shown while running or while queued in background) */}
         <div className={s.processingInfo}>
-          <div className={s.processingStatus}>{statusMsg}</div>
+          <div className={s.processingStatus}>
+            {isQueued ? `Server busy — ${queueInfo.active_jobs} job${queueInfo.active_jobs !== 1 ? 's' : ''} currently running` : statusMsg}
+          </div>
           <div className={s.progressBar}>
-            <div className={s.progressFill} style={{ width: `${progress}%` }} />
+            <div className={s.progressFill} style={{ width: isQueued ? '0%' : `${progress}%` }} />
           </div>
           <div className={s.progressMeta}>
-            <span className={s.progressPct}>{Math.round(progress)}%</span>
+            <span className={s.progressPct}>{isQueued ? 'In queue' : `${Math.round(progress)}%`}</span>
             <span className={s.elapsed}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
@@ -523,8 +567,11 @@ function ProcessingStep({ progress, statusMsg, elapsed, onCancel }) {
         </div>
 
         <div className={s.tipBox}>
-          <span className={s.tipLabel}>About MRIQC</span>
-          <p>MRIQC uses ANTs, FSL, and Nipype under the hood. It computes over 50 image quality metrics and generates publication-ready visual reports. Processing typically takes 5–15 minutes per participant.</p>
+          <span className={s.tipLabel}>{isQueued ? 'While you wait' : 'About MRIQC'}</span>
+          <p>{isQueued
+            ? 'WebMRIQC serves researchers across Africa and beyond. A fair compute queue ensures every submission is processed in order — your place is reserved.'
+            : 'MRIQC uses ANTs, FSL, and Nipype under the hood. It computes over 50 image quality metrics and generates publication-ready visual reports. Processing typically takes 5–15 minutes per participant.'
+          }</p>
         </div>
         <button className={s.cancelBtn} onClick={onCancel}>Cancel</button>
       </div>
@@ -725,6 +772,7 @@ export default function Analyze() {
   const [mriqcProgress, setMriqcProgress] = useState(0)
   const [mriqcStatus, setMriqcStatus] = useState('')
   const [mriqcElapsed, setMriqcElapsed] = useState('0:00')
+  const [queueInfo, setQueueInfo] = useState(null)   // null = not queued
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
   const [serverStatus, setServerStatus] = useState('checking')
@@ -811,15 +859,25 @@ export default function Analyze() {
     // Guard: only use blobOverride if it's an actual Blob/File, not a click event
     const inputBlob = (blobOverride instanceof Blob) ? blobOverride : bidsBlob
     setError(null)
+    setQueueInfo(null)
     setStep('processing')
     setMriqcProgress(5)
     startTimer(setMriqcElapsed)
     startFakeProgress(setMriqcProgress, setMriqcStatus, MRIQC_MESSAGES, 85)
 
+    // Called by pollUntilDone every time the server-side job status changes.
+    function onStatusUpdate(info) {
+      if (!info || info.status === 'running') {
+        setQueueInfo(null)   // clear ticket — job is now actually running
+      } else if (info.status === 'queued') {
+        setQueueInfo(info)   // show ticket card with position
+      }
+    }
+
     try {
       const blob = await runMRIQC(inputBlob, config, (pct) => {
         setMriqcProgress(5 + pct * 0.1)
-      })
+      }, onStatusUpdate)
       stopTimers()
       setMriqcProgress(92)
       setMriqcStatus('Parsing results...')
@@ -845,7 +903,7 @@ export default function Analyze() {
 
   function handleReset() {
     setDicomFile(null); setBidsBlob(null); setBidsFiles(null)
-    setResults(null); setError(null)
+    setResults(null); setError(null); setQueueInfo(null)
     setConvProgress(0); setConvElapsed('0:00'); setConvPhase('uploading'); setConvStatus('')
     setMriqcProgress(0); setMriqcElapsed('0:00'); setMriqcStatus('')
     setStep('setup')
@@ -916,7 +974,8 @@ export default function Analyze() {
           )}
           {step === 'processing' && (
             <ProcessingStep progress={mriqcProgress} statusMsg={mriqcStatus} elapsed={mriqcElapsed}
-              onCancel={() => { stopTimers(); setStep(mode === 'bids' ? 'setup' : 'bids_ready') }} />
+              queueInfo={queueInfo}
+              onCancel={() => { stopTimers(); setQueueInfo(null); setStep(mode === 'bids' ? 'setup' : 'bids_ready') }} />
           )}
           {step === 'results' && results && (
             <ResultsStep results={results} config={config} onReset={handleReset} />
