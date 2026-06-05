@@ -7,6 +7,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Web-based automated MRI image quality control platform powered by MRIQC. Compute IQMs from your neuroimaging data without installing any software." />
     <title>WebMRIQC — MRI Quality Control Platform</title>
+    <!-- Preload the DRACO-compressed brain model so it's ready before React mounts -->
+    <link rel="preload" href="/brain.draco.glb" as="fetch" crossorigin="anonymous">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">

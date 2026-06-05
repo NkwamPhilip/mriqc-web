@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { GLTFLoader }  from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 
 // ── Depth shader: front faces bright, back faces fade out ─────────────────────
 const VS = `
@@ -107,21 +107,24 @@ export default function BrainModel({ className }) {
     // Brain scale — set after OBJ loads; used by scan ring
     let brainScaleX = 0.92, brainScaleZ = 0.92
 
-    // ── OBJ Loader ─────────────────────────────────────────────────────────
-    const loader = new OBJLoader()
+    // ── GLTF + DRACO Loader ────────────────────────────────────────────────
+    // brain.draco.glb is 325 KB (vs 11 MB OBJ) — 97% smaller, binary,
+    // parses in a fraction of the time.
+    const draco = new DRACOLoader()
+    draco.setDecoderPath('/draco/')   // served from public/draco/
+    draco.preload()                   // start fetching decoder WASM early
+
+    const loader = new GLTFLoader()
+    loader.setDRACOLoader(draco)
     loader.load(
-      '/brain.obj',
-      (obj) => {
-        // Collect all geometries (some OBJs export multiple groups)
+      '/brain.draco.glb',
+      (gltf) => {
+        // Collect all mesh geometries in the scene
         const geos = []
-        obj.traverse(c => { if (c.isMesh) geos.push(c.geometry) })
+        gltf.scene.traverse(c => { if (c.isMesh) geos.push(c.geometry.clone()) })
         if (!geos.length) return
 
-        // Merge into one (usually just one group)
         let geo = geos[0]
-        if (geos.length > 1) {
-          geo = mergeGeometries(geos)
-        }
 
         // ── Normalise: centre + scale to fit ─────────────────────────────
         geo.computeBoundingBox()
@@ -142,25 +145,22 @@ export default function BrainModel({ className }) {
         brainScaleZ = (size.z * scale) * 0.52
 
         // ── Depth-only solid mesh ─────────────────────────────────────────
-        // Writes to the depth buffer but draws nothing — hides back-face wires
-        const depthOnlyMat = new THREE.MeshBasicMaterial({
-          colorWrite: false,
-          depthWrite: true,
-          side: THREE.FrontSide,
-        })
-        brain.add(new THREE.Mesh(geo, depthOnlyMat))
+        brain.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+          colorWrite: false, depthWrite: true, side: THREE.FrontSide,
+        })))
 
         // ── Wireframe overlay ─────────────────────────────────────────────
-        // Full wireframe — depth-occlusion from mesh above means back wires vanish
-        const wireGeo = new THREE.WireframeGeometry(geo)
-        brain.add(new THREE.LineSegments(wireGeo, depthMat(0x00c8b4, 0.35, 0.02)))
+        brain.add(new THREE.LineSegments(
+          new THREE.WireframeGeometry(geo),
+          depthMat(0x00c8b4, 0.35, 0.02),
+        ))
 
-        // Remove loading label
+        draco.dispose()
         if (el.contains(label)) el.removeChild(label)
       },
       undefined,
       (err) => {
-        label.textContent = 'Could not load brain.obj'
+        label.textContent = 'Could not load brain model'
         console.error(err)
       },
     )
