@@ -889,8 +889,8 @@
 /* ── Scan animation (Processing step) ──────────────── */
 .scanWrapper {
   position: relative;
-  width: 300px;
-  height: 300px;
+  width: 180px;
+  height: 180px;
 }
 
 .scanLineProc {
