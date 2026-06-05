@@ -84,20 +84,21 @@ JOB_ROOT.mkdir(parents=True, exist_ok=True)
 #
 # MAX_CONCURRENT_JOBS — how many MRIQC runs can execute in parallel.
 #   Tuned for the MAILAB scalar server: 384 CPUs / 1.5 TB RAM.
-#   Each job is given 18 cores + 64 GB → 16 jobs consume 288 cores + 1 TB,
-#   leaving ~100 cores and ~500 GB for the OS and web server headroom.
+#   Each job is given 36 cores + 128 GB:
+#     10 jobs × 36 cores = 360 of 384 CPUs
+#     10 jobs × 128 GB   = 1,280 of 1,500 GB RAM  (220 GB free for OS)
 #   Override with the MAX_CONCURRENT_JOBS env var in docker-compose.yml.
 #
 # MAX_QUEUE_SIZE — maximum users allowed to wait.  Requests beyond this are
 #   rejected immediately with HTTP 503 and a friendly message.
 # ══════════════════════════════════════════════════════════════════════════════
 
-MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "16"))
+MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "10"))
 MAX_QUEUE_SIZE      = int(os.environ.get("MAX_QUEUE_SIZE",      "100"))
 
 # Approximate processing time per job in minutes — used for wait estimates.
-# With 18 cores + 64 GB per job on the scalar server, T1w runs in ~4–6 min.
-_EST_MINUTES_PER_JOB = 5
+# With 36 cores + 128 GB per job, T1w ANTs registration runs in ~2–3 min.
+_EST_MINUTES_PER_JOB = 3
 
 _q_lock  : Lock          = Lock()
 _active  : set[str]      = set()   # job_ids currently running MRIQC
@@ -565,8 +566,8 @@ async def run_mriqc_endpoint(
     participant_label: str = Form(""),
     modalities:        str = Form("T1w"),
     session_id:        str = Form(""),
-    n_procs:           int = Form(18),   # 18 cores × 16 jobs = 288 of 384 CPUs
-    mem_gb:            int = Form(64),   # 64 GB  × 16 jobs = 1 TB of 1.5 TB RAM
+    n_procs:           int = Form(36),   # 36 cores × 10 jobs = 360 of 384 CPUs
+    mem_gb:            int = Form(128),  # 128 GB  × 10 jobs = 1.28 TB of 1.5 TB RAM
 ):
     if not MRIQC_BIN:
         raise HTTPException(503, "mriqc is not installed in this environment")

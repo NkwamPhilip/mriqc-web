@@ -52,7 +52,8 @@ services:
       # ── Web server ────────────────────────────────────────────────────────
       - WORKERS=${WORKERS:-16}
       # ── Job queue (tuned for 384-CPU / 1.5 TB scalar server) ─────────────
-      - MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS:-16}
+      # 10 jobs × 128 GB = 1,280 GB RAM  |  10 jobs × 36 cores = 360 CPUs
+      - MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS:-10}
       - MAX_QUEUE_SIZE=${MAX_QUEUE_SIZE:-100}
       # ── AI chatbot (Google Gemini free tier) ──────────────────────────────
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
