@@ -709,7 +709,7 @@ from email.mime.text      import MIMEText
 from email.mime.base      import MIMEBase
 from email                import encoders
 
-_ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY",  "")
+_GEMINI_KEY     = os.environ.get("GEMINI_API_KEY",      "")
 _SUPPORT_EMAIL  = os.environ.get("SUPPORT_EMAIL",       "")
 _SMTP_HOST      = os.environ.get("SMTP_HOST",           "smtp.gmail.com")
 _SMTP_PORT      = int(os.environ.get("SMTP_PORT",        "587"))
@@ -810,7 +810,12 @@ _CHAT_SYSTEM = textwrap.dedent("""
 """).strip()
 
 
-# ── AI chat (streaming SSE) ───────────────────────────────────────────────────
+# ── AI chat (Google Gemini 1.5 Flash — free tier, no credit card needed) ─────
+#
+# Free tier limits (as of 2025, via Google AI Studio):
+#   15 requests / minute · 1 million tokens / minute · 1 500 requests / day
+# That covers thousands of support conversations at zero cost.
+# Get a free key at: https://aistudio.google.com/app/apikey
 
 @app.post("/support/chat")
 async def support_chat(payload: dict = Body(...)):
@@ -820,35 +825,71 @@ async def support_chat(payload: dict = Body(...)):
       data: {"text": "..."}   (partial response)
       data: [DONE]            (end of stream)
     """
-    if not _ANTHROPIC_KEY:
-        raise HTTPException(503, "AI support is not configured on this server")
+    if not _GEMINI_KEY:
+        raise HTTPException(503, "AI support is not configured — set GEMINI_API_KEY")
 
     messages = payload.get("messages", [])
     if not messages:
         raise HTTPException(400, "messages array is required")
-    # Clamp history to last 20 turns to keep tokens manageable
+    # Clamp to last 20 turns (keeps token count low on the free tier)
     messages = messages[-20:]
 
     try:
-        from anthropic import AsyncAnthropic
+        import google.generativeai as genai
     except ImportError:
-        raise HTTPException(503, "anthropic package not installed")
+        raise HTTPException(503, "google-generativeai package not installed")
 
-    client = AsyncAnthropic(api_key=_ANTHROPIC_KEY)
+    loop = __import__('asyncio').get_event_loop()
+    import asyncio
+    q: asyncio.Queue = asyncio.Queue()
+
+    def _stream_in_thread():
+        """Run the blocking Gemini SDK call in a background thread."""
+        try:
+            genai.configure(api_key=_GEMINI_KEY)
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                system_instruction=_CHAT_SYSTEM,
+            )
+
+            # Convert to Gemini format.
+            # Gemini uses "user" / "model" roles (not "assistant").
+            # History must start with a user turn — skip any leading model
+            # messages (e.g. the welcome message rendered client-side).
+            gemini_history = []
+            for m in messages[:-1]:
+                role = "user" if m["role"] == "user" else "model"
+                gemini_history.append({"role": role, "parts": [m["content"]]})
+            # Drop leading model turns so Gemini doesn't reject the payload.
+            while gemini_history and gemini_history[0]["role"] != "user":
+                gemini_history.pop(0)
+
+            chat     = model.start_chat(history=gemini_history)
+            response = chat.send_message(messages[-1]["content"], stream=True)
+
+            for chunk in response:
+                if chunk.text:
+                    asyncio.run_coroutine_threadsafe(
+                        q.put(("text", chunk.text)), loop)
+        except Exception as e:
+            log.exception("support_chat gemini error")
+            asyncio.run_coroutine_threadsafe(q.put(("error", str(e))), loop)
+        finally:
+            asyncio.run_coroutine_threadsafe(q.put(("done", None)), loop)
+
+    Thread(target=_stream_in_thread, daemon=True).start()
 
     async def generate():
         try:
-            async with client.messages.stream(
-                model="claude-haiku-4-5",
-                max_tokens=1024,
-                system=_CHAT_SYSTEM,
-                messages=messages,
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield f"data: {json.dumps({'text': text})}\n\n"
-        except Exception as e:
-            log.exception("support_chat stream error")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            while True:
+                kind, payload_item = await q.get()
+                if kind == "text":
+                    yield f"data: {json.dumps({'text': payload_item})}\n\n"
+                elif kind == "error":
+                    yield f"data: {json.dumps({'error': payload_item})}\n\n"
+                    break
+                else:   # "done"
+                    break
         finally:
             yield "data: [DONE]\n\n"
 
