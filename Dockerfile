@@ -25,7 +25,8 @@ RUN pip install --no-cache-dir \
         fastapi \
         "uvicorn[standard]" \
         python-multipart \
-        dcm2bids
+        dcm2bids \
+        anthropic
 
 # ── App code ──────────────────────────────────────────────────────────────────
 WORKDIR /webmriqc

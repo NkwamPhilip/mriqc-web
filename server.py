@@ -41,8 +41,8 @@ for _conda_bin in [
     if Path(_conda_bin).is_dir() and _conda_bin not in os.environ.get("PATH", ""):
         os.environ["PATH"] = f"{_conda_bin}:{os.environ['PATH']}"
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Body
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -689,6 +689,234 @@ async def run_mriqc_endpoint(
         log.info("[%s] MRIQC thread dispatched immediately", job_id)
 
     return {"job_id": job_id}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Support — AI chatbot  +  email ticket system
+#
+# Required env vars:
+#   ANTHROPIC_API_KEY  — enables the AI chat assistant (claude-3-5-haiku)
+#   SUPPORT_EMAIL      — lab inbox that receives tickets
+#   SMTP_HOST          — e.g. smtp.gmail.com
+#   SMTP_PORT          — e.g. 587  (TLS)
+#   SMTP_USER          — sending Gmail / SMTP address
+#   SMTP_PASSWORD      — Gmail App Password (not regular password)
+# ══════════════════════════════════════════════════════════════════════════════
+
+import smtplib, textwrap
+from email.mime.multipart import MIMEMultipart
+from email.mime.text      import MIMEText
+from email.mime.base      import MIMEBase
+from email                import encoders
+
+_ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY",  "")
+_SUPPORT_EMAIL  = os.environ.get("SUPPORT_EMAIL",       "")
+_SMTP_HOST      = os.environ.get("SMTP_HOST",           "smtp.gmail.com")
+_SMTP_PORT      = int(os.environ.get("SMTP_PORT",        "587"))
+_SMTP_USER      = os.environ.get("SMTP_USER",            "")
+_SMTP_PASSWORD  = os.environ.get("SMTP_PASSWORD",        "")
+
+# ── System prompt: MRIQC domain expertise for the chatbot ────────────────────
+_CHAT_SYSTEM = textwrap.dedent("""
+    You are the WebMRIQC Support Assistant — an expert AI helper for the
+    WebMRIQC platform (https://webmriqc.mailab.io), developed by MAILAB
+    (Medical Artificial Intelligence Laboratory).
+
+    ## What WebMRIQC does
+    WebMRIQC lets neuroimaging researchers:
+    • Upload BIDS-formatted datasets or raw DICOM ZIP files
+    • Auto-convert DICOM → BIDS with dcm2bids + dcm2niix
+    • Run the MRIQC pipeline to compute Image Quality Metrics (IQMs)
+    • View results in an interactive dashboard (metric cards, brain figure
+      gallery, normative reference comparisons, HTML visual reports)
+    • Download the full MRIQC results ZIP
+    • Queue system: when the server is busy, jobs wait in a fair queue
+
+    ## Common errors and fixes
+
+    ### Upload / HTTP errors
+    • 422 Unprocessable Entity: file is not a valid ZIP, or a required field
+      is missing (participant label, modality). Re-check the form.
+    • 503 Queue full: server is at capacity. Try again in 1–2 hours.
+    • "Upload timed out": file > 2 GB or slow connection. Compress data or
+      split into smaller sessions.
+
+    ### DICOM → BIDS conversion errors
+    • "dcm2bids failed": DICOMs may be compressed, incomplete, or from an
+      unsupported sequence. Check the conversion log in the BIDS ZIP.
+    • "No NIfTI files found": the DICOM series did not match any known
+      sequence (T1w, T2w, BOLD, DWI, ASL, FLAIR). Verify the SeriesDescription
+      in the DICOM header (use dcmdump or MRIcroGL).
+    • "dcm2niix not found" / "dcm2bids not found": server config problem
+      — submit a support ticket.
+
+    ### MRIQC processing errors
+    • "mriqc failed (exit 1)": usually BIDS validation failure. Run
+      bids-validator on your dataset before uploading.
+    • "No participants found": participant_label doesn't match the sub-XX
+      folder in your BIDS dataset. Labels are case-sensitive.
+    • "Job timed out after 2 hours": MRIQC ran too long. Try a single
+      participant or single session, or reduce the modalities selected.
+    • "No metrics found / no TSV": MRIQC completed but produced no IQMs —
+      check that the requested modality actually exists in your BIDS data.
+
+    ### BIDS format guidance
+    A valid BIDS root must contain:
+      dataset_description.json  (required)
+      sub-XX/                   (one folder per participant)
+        ses-YY/                 (optional session folder)
+          anat/                 (T1w, T2w: .nii.gz + .json sidecar)
+          func/                 (BOLD: .nii.gz + .json + events.tsv)
+          dwi/                  (DWI: .nii.gz + .json + .bvec + .bval)
+          perf/                 (ASL: .nii.gz + .json)
+    Run `bids-validator` locally first to catch issues before uploading.
+
+    ### IQM interpretation (T1w anatomical)
+    CNR  > 2.5 = good  │ tissue contrast vs noise
+    SNR  > 15  = good  │ signal vs background noise
+    EFC  < 0.5 = good  │ ghosting / blurring (Shannon entropy)
+    FBER > 100 = good  │ -1 means not computable (some scanners)
+    CJV  < 0.5 = good  │ bias field / tissue inhomogeneity
+    INU  < 0.1 = good  │ intensity non-uniformity
+    FWHM < 3 mm = good │ spatial smoothness
+
+    ### IQM interpretation (fMRI BOLD)
+    tSNR > 40  = good  │ temporal signal stability
+    FD   < 0.2 mm = good │ head motion per volume
+    DVARS < 1.5 = good │ sudden signal changes (motion spikes)
+
+    ## Reference population
+    The dashboard shows a "↑ X%" label — this is how the scan compares to
+    33 T1w reference scans from OpenNeuro. 0% means below all references
+    (common for clinical 1.5T scanners vs research 3T datasets).
+
+    ## Tips
+    • Always keep the browser tab open while a job is processing.
+    • The queue ticket (#N) is reserved — the job will start automatically.
+    • For large DICOM datasets, zip the DICOM folder (not its parent).
+    • If a conversion fails, download the BIDS ZIP — it contains a
+      conversion_log.txt with the detailed dcm2bids output.
+
+    ## When to escalate
+    If the problem can't be resolved from these guidelines, tell the user
+    to submit a ticket via the Contact tab. They should include:
+    - The exact error message
+    - The scanner make/model and field strength
+    - The modality (T1w, BOLD, etc.)
+    - The conversion log or error log as an attachment
+
+    Be concise, technically accurate, and friendly. Use bullet points.
+    If unsure, say so clearly and suggest submitting a ticket.
+""").strip()
+
+
+# ── AI chat (streaming SSE) ───────────────────────────────────────────────────
+
+@app.post("/support/chat")
+async def support_chat(payload: dict = Body(...)):
+    """
+    Body: { "messages": [ {"role":"user","content":"..."}, ... ] }
+    Returns a text/event-stream SSE stream of JSON chunks:
+      data: {"text": "..."}   (partial response)
+      data: [DONE]            (end of stream)
+    """
+    if not _ANTHROPIC_KEY:
+        raise HTTPException(503, "AI support is not configured on this server")
+
+    messages = payload.get("messages", [])
+    if not messages:
+        raise HTTPException(400, "messages array is required")
+    # Clamp history to last 20 turns to keep tokens manageable
+    messages = messages[-20:]
+
+    try:
+        from anthropic import AsyncAnthropic
+    except ImportError:
+        raise HTTPException(503, "anthropic package not installed")
+
+    client = AsyncAnthropic(api_key=_ANTHROPIC_KEY)
+
+    async def generate():
+        try:
+            async with client.messages.stream(
+                model="claude-haiku-4-5",
+                max_tokens=1024,
+                system=_CHAT_SYSTEM,
+                messages=messages,
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield f"data: {json.dumps({'text': text})}\n\n"
+        except Exception as e:
+            log.exception("support_chat stream error")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+# ── Support ticket (email) ────────────────────────────────────────────────────
+
+@app.post("/support/ticket")
+async def support_ticket(
+    name:        str        = Form(...),
+    institution: str        = Form(""),
+    email:       str        = Form(...),
+    subject:     str        = Form("WebMRIQC Support Request"),
+    message:     str        = Form(...),
+    attachment:  UploadFile = File(None),
+):
+    """Send a support ticket email to the lab inbox."""
+    if not _SUPPORT_EMAIL:
+        raise HTTPException(503, "Email support is not configured on this server")
+    if not _SMTP_USER or not _SMTP_PASSWORD:
+        raise HTTPException(503, "SMTP credentials not configured")
+
+    # ── Build email ───────────────────────────────────────────────────────────
+    msg = MIMEMultipart()
+    msg["From"]     = _SMTP_USER
+    msg["To"]       = _SUPPORT_EMAIL
+    msg["Reply-To"] = email
+    msg["Subject"]  = f"[WebMRIQC] {subject}"
+
+    body = textwrap.dedent(f"""
+        WebMRIQC Support Ticket
+        ══════════════════════════════════════
+        Name:        {name}
+        Institution: {institution or '—'}
+        Email:       {email}
+        ──────────────────────────────────────
+        {message}
+        ══════════════════════════════════════
+        Sent via WebMRIQC support form
+    """).strip()
+    msg.attach(MIMEText(body, "plain"))
+
+    # ── Attach file (optional) ────────────────────────────────────────────────
+    if attachment and attachment.filename:
+        data = await attachment.read()
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition",
+                        f'attachment; filename="{attachment.filename}"')
+        msg.attach(part)
+
+    # ── Send ──────────────────────────────────────────────────────────────────
+    try:
+        with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=15) as srv:
+            srv.ehlo()
+            srv.starttls()
+            srv.login(_SMTP_USER, _SMTP_PASSWORD)
+            srv.sendmail(_SMTP_USER, _SUPPORT_EMAIL, msg.as_string())
+        log.info("Support ticket sent: from=%s subject=%s", email, subject)
+    except Exception as e:
+        log.exception("Failed to send support ticket")
+        raise HTTPException(500, f"Could not send email: {e}")
+
+    return {"sent": True}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

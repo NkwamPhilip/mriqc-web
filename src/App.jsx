@@ -1,8 +1,9 @@
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { useEffect } from 'react'
-import Navbar from './components/Navbar'
-import Footer from './components/Footer'
-import Home from './pages/Home'
+import Navbar  from './components/Navbar'
+import Footer  from './components/Footer'
+import Support from './components/Support'
+import Home    from './pages/Home'
 import Analyze from './pages/Analyze'
 import Compare from './pages/Compare'
 
@@ -23,6 +24,8 @@ export default function App() {
         <Route path="/compare" element={<Compare />} />
       </Routes>
       <Footer />
+      {/* Floating support widget — visible on every page */}
+      <Support />
     </BrowserRouter>
   )
 }
