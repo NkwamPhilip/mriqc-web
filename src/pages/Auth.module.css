@@ -51,6 +51,19 @@
   letter-spacing: 0.05em;
   color: var(--text-2);
 }
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.forgotLink {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--teal);
+  text-decoration: none;
+}
+.forgotLink:hover { text-decoration: underline; }
 .input {
   width: 100%;
   box-sizing: border-box;

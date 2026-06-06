@@ -7,9 +7,11 @@ import Support from './components/Support'
 import Home    from './pages/Home'
 import Analyze from './pages/Analyze'
 import Compare from './pages/Compare'
-import Login         from './pages/Login'
-import Register      from './pages/Register'
-import MySubmissions from './pages/MySubmissions'
+import Login          from './pages/Login'
+import Register       from './pages/Register'
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword  from './pages/ResetPassword'
+import MySubmissions  from './pages/MySubmissions'
 
 function ScrollToTop() {
   const { pathname } = useLocation()
@@ -29,6 +31,8 @@ export default function App() {
           <Route path="/compare" element={<Compare />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/submissions" element={<MySubmissions />} />
         </Routes>
         <Footer />

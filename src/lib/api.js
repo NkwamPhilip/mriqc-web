@@ -397,3 +397,9 @@ export function fetchMe(token) {
 export function fetchMySubmissions(token) {
   return authFetch('/auth/submissions', { token })
 }
+export function forgotPassword({ email }) {
+  return authFetch('/auth/forgot-password', { method: 'POST', body: { email } })
+}
+export function resetPassword({ email, code, password }) {
+  return authFetch('/auth/reset-password', { method: 'POST', body: { email, code, password } })
+}

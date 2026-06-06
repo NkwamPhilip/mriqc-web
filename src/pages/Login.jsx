@@ -58,7 +58,10 @@ export default function Login() {
           </div>
 
           <div className={s.field}>
-            <label className={s.label}>Password</label>
+            <div className={s.labelRow}>
+              <label className={s.label}>Password</label>
+              <Link to="/forgot-password" className={s.forgotLink}>Forgot password?</Link>
+            </div>
             <input className={s.input} type="password" autoComplete="current-password" required
               value={password} onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••" />

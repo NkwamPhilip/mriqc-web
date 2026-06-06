@@ -1055,6 +1055,13 @@ def _init_db():
                 label       TEXT,
                 created_at  TEXT NOT NULL
             )""")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS password_resets (
+                email       TEXT NOT NULL,
+                code_hash   TEXT NOT NULL,
+                salt        TEXT NOT NULL,
+                expires_at  REAL NOT NULL
+            )""")
     log.info("Auth DB ready at %s", _DB_PATH)
 
 _init_db()
@@ -1206,6 +1213,106 @@ def auth_submissions(authorization: str = Header(None)):
             "queue_position": live.get("queue_position"),
         })
     return {"submissions": out}
+
+
+# ── Password reset ────────────────────────────────────────────────────────────
+
+def _send_email(to_addr: str, subject: str, body_text: str) -> bool:
+    """Send a plain-text email via the configured SMTP relay. Returns False
+    (without raising) if SMTP isn't configured, so callers can degrade."""
+    if not _SMTP_USER or not _SMTP_PASSWORD:
+        return False
+    msg = MIMEMultipart()
+    msg["From"]    = _SMTP_USER
+    msg["To"]      = to_addr
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body_text, "plain"))
+    with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=15) as srv:
+        srv.ehlo(); srv.starttls()
+        srv.login(_SMTP_USER, _SMTP_PASSWORD)
+        srv.sendmail(_SMTP_USER, to_addr, msg.as_string())
+    return True
+
+
+@app.post("/auth/forgot-password")
+def auth_forgot_password(payload: dict = Body(...)):
+    """
+    Begin a password reset: email a 6-digit code that expires in 15 minutes.
+    Always returns success so attackers can't enumerate which emails exist.
+    """
+    email = (payload.get("email") or "").strip().lower()
+    GENERIC = {"ok": True,
+               "message": "If an account exists for that email, a reset code has been sent."}
+    if "@" not in email:
+        return GENERIC
+
+    with _db_lock, _db() as c:
+        user = c.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+    if not user:
+        return GENERIC          # don't reveal non-existence
+
+    code             = f"{secrets.randbelow(1_000_000):06d}"     # 6-digit
+    code_hash, salt  = _hash_pw(code)                            # never store plaintext
+    expires          = time.time() + 15 * 60
+
+    with _db_lock, _db() as c:
+        c.execute("DELETE FROM password_resets WHERE email=?", (email,))   # invalidate old codes
+        c.execute("INSERT INTO password_resets (email, code_hash, salt, expires_at) "
+                  "VALUES (?,?,?,?)", (email, code_hash, salt, expires))
+
+    subject = "Your WebMRIQC password reset code"
+    body = textwrap.dedent(f"""
+        You requested a password reset for your WebMRIQC account.
+
+        Your reset code is:  {code}
+
+        This code expires in 15 minutes. If you didn't request this, you can
+        safely ignore this email — your password will not change.
+
+        — WebMRIQC
+    """).strip()
+
+    try:
+        sent = _send_email(email, subject, body)
+    except Exception:
+        log.exception("forgot-password: email send failed")
+        sent = False
+
+    if not sent:
+        # SMTP not configured (or failed) — log the code so testing still works.
+        # In production with SMTP set, the code is emailed and never logged.
+        log.warning("[forgot-password] code for %s: %s", email, code)
+
+    return GENERIC
+
+
+@app.post("/auth/reset-password")
+def auth_reset_password(payload: dict = Body(...)):
+    """Complete a reset: verify the emailed code, then set the new password."""
+    email = (payload.get("email") or "").strip().lower()
+    code  = (payload.get("code") or "").strip()
+    newpw = payload.get("password") or ""
+
+    if len(newpw) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+
+    with _db_lock, _db() as c:
+        row = c.execute(
+            "SELECT * FROM password_resets WHERE email=? ORDER BY expires_at DESC LIMIT 1",
+            (email,),
+        ).fetchone()
+
+    if not row or row["expires_at"] < time.time() or not _verify_pw(code, row["code_hash"], row["salt"]):
+        raise HTTPException(400, "Invalid or expired reset code")
+
+    pw_hash, pw_salt = _hash_pw(newpw)
+    with _db_lock, _db() as c:
+        c.execute("UPDATE users SET pw_hash=?, pw_salt=? WHERE email=?",
+                  (pw_hash, pw_salt, email))
+        c.execute("DELETE FROM password_resets WHERE email=?", (email,))   # one-time use
+
+    log.info("Password reset completed for %s", email)
+    return {"ok": True, "message": "Your password has been reset. You can now sign in."}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
