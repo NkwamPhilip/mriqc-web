@@ -5,6 +5,16 @@
 // blank — relative paths work automatically.
 const API = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 
+// ── Auth token (shared with AuthContext) ──────────────────────────────────────
+// Stored in localStorage so submit requests are automatically attributed to a
+// logged-in user. Guests have no token → their jobs run anonymously, untracked.
+export const TOKEN_KEY = 'webmriqc_token'
+export function getToken() { return localStorage.getItem(TOKEN_KEY) }
+function authHeader() {
+  const t = getToken()
+  return t ? `Bearer ${t}` : null
+}
+
 export async function checkHealth() {
   const res = await fetch(`${API}/health`, { signal: AbortSignal.timeout(10000) })
   if (!res.ok) throw new Error('Server unreachable')
@@ -257,6 +267,39 @@ export function parseTSV(content) {
   }
 }
 
+// Delimiter-aware table parser — handles BOTH tab-separated (TSV) and
+// comma-separated (CSV) MRIQC exports. Detects the delimiter from the header
+// row and respects simple double-quoted CSV cells.
+export function parseTable(content) {
+  const lines = content.trim().split(/\r?\n/)
+  if (lines.length < 2) return { headers: [], rows: [] }
+  const delim = lines[0].includes('\t') ? '\t' : ','
+
+  const splitLine = (line) => {
+    if (delim === '\t') return line.split('\t')
+    // CSV with quote handling
+    const out = []
+    let cur = '', inQ = false
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i]
+      if (inQ) {
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++ }
+        else if (ch === '"') inQ = false
+        else cur += ch
+      } else if (ch === '"') inQ = true
+      else if (ch === ',') { out.push(cur); cur = '' }
+      else cur += ch
+    }
+    out.push(cur)
+    return out
+  }
+
+  return {
+    headers: splitLine(lines[0]).map((h) => h.trim()),
+    rows: lines.slice(1).map(splitLine),
+  }
+}
+
 // ── CSV download ─────────────────────────────────────────────────────────────
 export function downloadCSV(tsvContent, filename) {
   const csv = tsvContent.trim().split('\n')
@@ -286,28 +329,35 @@ export function getMulticenterDatasets() {
   catch { return [] }
 }
 
-export function addMulticenterDataset(label, subjectId, sessionId, modality, tsvFiles) {
+// Store a dataset from already-parsed metric rows (array of {key: value}).
+// This is the shared core — used directly for MRIQC JSON metrics, and via
+// addMulticenterDataset() for uploaded CSV/TSV files.
+export function addMulticenterRows(label, subjectId, sessionId, modality, rows) {
   const datasets = getMulticenterDatasets()
-  const id = Date.now().toString()
-
-  const allMetrics = []
-  for (const { content } of tsvFiles) {
-    const { headers, rows } = parseTSV(content)
-    for (const row of rows) {
-      const m = {}
-      headers.forEach((h, i) => { m[h] = row[i] ?? '' })
-      allMetrics.push(m)
-    }
-  }
-
   const entry = {
-    id, label, subjectId, sessionId, modality,
-    metrics: allMetrics,
+    id: Date.now().toString(),
+    label, subjectId, sessionId, modality,
+    metrics: rows || [],
     addedAt: new Date().toISOString(),
   }
   datasets.push(entry)
   localStorage.setItem('mriqc_mc_datasets', JSON.stringify(datasets))
   return entry
+}
+
+// Store a dataset from uploaded metric files. Accepts BOTH CSV and TSV —
+// each file's delimiter is auto-detected by parseTable().
+export function addMulticenterDataset(label, subjectId, sessionId, modality, files) {
+  const rows = []
+  for (const { content } of (files || [])) {
+    const { headers, rows: parsed } = parseTable(content)
+    for (const row of parsed) {
+      const m = {}
+      headers.forEach((h, i) => { m[h] = row[i] ?? '' })
+      rows.push(m)
+    }
+  }
+  return addMulticenterRows(label, subjectId, sessionId, modality, rows)
 }
 
 export function removeMulticenterDataset(id) {

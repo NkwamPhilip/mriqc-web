@@ -65,13 +65,20 @@ services:
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      # ── User accounts ─────────────────────────────────────────────────────
+      # SET AUTH_SECRET in your .env so logins survive restarts. Generate with:
+      #   openssl rand -hex 32
+      - AUTH_SECRET=${AUTH_SECRET:-}
+      - DATA_DIR=/data
 
     # Mount the host's /tmp/webmriqc so large DICOM/BIDS work dirs live on the
     # host filesystem instead of the container's overlay layer. This avoids
     # Docker's overlay storage growing huge and is faster on most Linux systems.
+    # The named 'webmriqc_data' volume persistently stores the accounts SQLite DB.
     volumes:
       - /tmp/webmriqc:/tmp/webmriqc
       - /tmp/webmriqc_jobs:/tmp/webmriqc_jobs
+      - webmriqc_data:/data
 
     # Shared memory for FSL/ANTs parallel steps.
     # 16 concurrent jobs × ~1 GB shm each → 16 GB minimum; 64 GB is generous.
@@ -94,6 +101,11 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+
+# Named volume that persistently stores the user-accounts SQLite database,
+# so registrations survive `docker compose up --build` and restarts.
+volumes:
+  webmriqc_data:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OPTIONAL: uncomment the nginx service below to put a proper reverse proxy in

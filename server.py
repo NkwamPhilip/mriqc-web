@@ -41,7 +41,9 @@ for _conda_bin in [
     if Path(_conda_bin).is_dir() and _conda_bin not in os.environ.get("PATH", ""):
         os.environ["PATH"] = f"{_conda_bin}:{os.environ['PATH']}"
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Body
+from fastapi import (
+    FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Body, Header,
+)
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -457,6 +459,7 @@ async def convert_dicom(
     dicom_zip:        UploadFile = File(...),
     participant_label: str = Form("01"),
     session_id:        str = Form(""),
+    authorization:    str = Header(None),
 ):
     participant_label = participant_label.strip()
     if not participant_label or not participant_label.replace("-", "").replace("_", "").isalnum():
@@ -465,6 +468,10 @@ async def convert_dicom(
     job_id   = str(uuid.uuid4())[:8]
     work_dir = WORK_ROOT / job_id
     work_dir.mkdir(parents=True)
+
+    # Track this submission if the request is from a logged-in user (no-op for guests)
+    _record_submission(_user_from_header(authorization), job_id, "dicom",
+                       f"DICOM→BIDS · sub-{participant_label}")
 
     # Save upload synchronously (this is fast — it's just writing bytes)
     try:
@@ -568,6 +575,7 @@ async def run_mriqc_endpoint(
     session_id:        str = Form(""),
     n_procs:           int = Form(36),   # 36 cores × 10 jobs = 360 of 384 CPUs
     mem_gb:            int = Form(128),  # 128 GB  × 10 jobs = 1.28 TB of 1.5 TB RAM
+    authorization:     str = Header(None),
 ):
     if not MRIQC_BIN:
         raise HTTPException(503, "mriqc is not installed in this environment")
@@ -589,6 +597,11 @@ async def run_mriqc_endpoint(
 
     # Don't touch the "running" sentinel yet — the job may be queued first.
     job_create(job_id, running=False)
+
+    # Track this submission if the request is from a logged-in user (no-op for guests)
+    _mods = modalities.strip() or "T1w"
+    _record_submission(_user_from_header(authorization), job_id, "mriqc",
+                       f"MRIQC · {_mods}" + (f" · sub-{participant_label}" if participant_label else ""))
 
     def _run():
         # Mark as running only now, when the compute slot has been granted.
@@ -982,6 +995,217 @@ async def support_ticket(
         raise HTTPException(500, f"Could not send email: {e}")
 
     return {"sent": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# User accounts + submission tracking
+#
+# Dependency-free: stdlib sqlite3 for storage, pbkdf2 for password hashing,
+# and a hand-rolled HS256 token (no PyJWT needed).  Guests never touch this —
+# accounts are entirely optional.
+#
+# Env:
+#   DATA_DIR     directory for the SQLite DB (default /data — mount a volume!)
+#   AUTH_SECRET  HMAC secret for signing tokens. SET THIS in production so
+#                tokens survive restarts; if unset a random one is generated
+#                each boot (existing logins are invalidated on restart).
+# ══════════════════════════════════════════════════════════════════════════════
+
+import sqlite3, hmac, base64, time
+from threading import Lock as _ThreadLock
+
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    DATA_DIR = JOB_ROOT          # fallback to the already-mounted job volume
+_DB_PATH   = DATA_DIR / "webmriqc.db"
+_db_lock   = _ThreadLock()
+
+_AUTH_SECRET = os.environ.get("AUTH_SECRET", "") or secrets.token_hex(32)
+if not os.environ.get("AUTH_SECRET"):
+    log.warning("AUTH_SECRET not set — generated a random one. Logins will "
+                "reset on restart. Set AUTH_SECRET in production.")
+
+
+def _db():
+    conn = sqlite3.connect(str(_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db():
+    with _db_lock, _db() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                email       TEXT UNIQUE NOT NULL,
+                name        TEXT,
+                institution TEXT,
+                pw_hash     TEXT NOT NULL,
+                pw_salt     TEXT NOT NULL,
+                created_at  TEXT NOT NULL
+            )""")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS submissions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id      TEXT NOT NULL,
+                user_id     INTEGER NOT NULL,
+                kind        TEXT,
+                label       TEXT,
+                created_at  TEXT NOT NULL
+            )""")
+    log.info("Auth DB ready at %s", _DB_PATH)
+
+_init_db()
+
+
+# ── Password hashing (pbkdf2-sha256, stdlib) ──────────────────────────────────
+
+def _hash_pw(pw: str, salt: str | None = None) -> tuple[str, str]:
+    salt = salt or secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), 200_000)
+    return base64.b64encode(dk).decode(), salt
+
+def _verify_pw(pw: str, stored_hash: str, salt: str) -> bool:
+    calc, _ = _hash_pw(pw, salt)
+    return hmac.compare_digest(calc, stored_hash)
+
+
+# ── Minimal signed token (HS256, JWT-compatible) ──────────────────────────────
+
+def _b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+def _b64u_dec(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+def _make_token(user_id: int, days: int = 30) -> str:
+    header  = _b64u(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    payload = _b64u(json.dumps({"uid": user_id,
+                                "exp": int(time.time()) + days * 86400}).encode())
+    sig = hmac.new(_AUTH_SECRET.encode(), f"{header}.{payload}".encode(),
+                   hashlib.sha256).digest()
+    return f"{header}.{payload}.{_b64u(sig)}"
+
+def _verify_token(token: str):
+    try:
+        header, payload, sig = token.split(".")
+        expect = hmac.new(_AUTH_SECRET.encode(), f"{header}.{payload}".encode(),
+                          hashlib.sha256).digest()
+        if not hmac.compare_digest(_b64u(expect), sig):
+            return None
+        data = json.loads(_b64u_dec(payload))
+        if data.get("exp", 0) < time.time():
+            return None
+        return data.get("uid")
+    except Exception:
+        return None
+
+
+def _user_public(row) -> dict:
+    return {"id": row["id"], "email": row["email"],
+            "name": row["name"], "institution": row["institution"]}
+
+def _user_from_header(authorization: str | None):
+    """Return the user row for a 'Bearer <token>' header, or None."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    uid = _verify_token(authorization[7:].strip())
+    if uid is None:
+        return None
+    with _db_lock, _db() as c:
+        return c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+
+def _record_submission(user_row, job_id: str, kind: str, label: str):
+    """Best-effort: log a submission against a logged-in user (no-op for guests)."""
+    if not user_row:
+        return
+    try:
+        with _db_lock, _db() as c:
+            c.execute(
+                "INSERT INTO submissions (job_id, user_id, kind, label, created_at) "
+                "VALUES (?,?,?,?,?)",
+                (job_id, user_row["id"], kind, label,
+                 datetime.datetime.utcnow().isoformat()),
+            )
+    except Exception:
+        log.exception("Failed to record submission for job %s", job_id)
+
+
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+
+@app.post("/auth/register")
+def auth_register(payload: dict = Body(...)):
+    email = (payload.get("email") or "").strip().lower()
+    pw    = payload.get("password") or ""
+    name  = (payload.get("name") or "").strip()
+    inst  = (payload.get("institution") or "").strip()
+
+    if "@" not in email or "." not in email:
+        raise HTTPException(400, "Please enter a valid email address")
+    if len(pw) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+
+    pw_hash, pw_salt = _hash_pw(pw)
+    try:
+        with _db_lock, _db() as c:
+            cur = c.execute(
+                "INSERT INTO users (email, name, institution, pw_hash, pw_salt, created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (email, name, inst, pw_hash, pw_salt,
+                 datetime.datetime.utcnow().isoformat()),
+            )
+            uid = cur.lastrowid
+            row = c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "An account with that email already exists")
+
+    return {"token": _make_token(uid), "user": _user_public(row)}
+
+
+@app.post("/auth/login")
+def auth_login(payload: dict = Body(...)):
+    email = (payload.get("email") or "").strip().lower()
+    pw    = payload.get("password") or ""
+    with _db_lock, _db() as c:
+        row = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+    if not row or not _verify_pw(pw, row["pw_hash"], row["pw_salt"]):
+        raise HTTPException(401, "Incorrect email or password")
+    return {"token": _make_token(row["id"]), "user": _user_public(row)}
+
+
+@app.get("/auth/me")
+def auth_me(authorization: str = Header(None)):
+    row = _user_from_header(authorization)
+    if not row:
+        raise HTTPException(401, "Not authenticated")
+    return {"user": _user_public(row)}
+
+
+@app.get("/auth/submissions")
+def auth_submissions(authorization: str = Header(None)):
+    row = _user_from_header(authorization)
+    if not row:
+        raise HTTPException(401, "Not authenticated")
+    with _db_lock, _db() as c:
+        subs = c.execute(
+            "SELECT job_id, kind, label, created_at FROM submissions "
+            "WHERE user_id=? ORDER BY id DESC LIMIT 200", (row["id"],),
+        ).fetchall()
+    # Attach the live status from the filesystem job store / queue.
+    out = []
+    for s in subs:
+        live = _q_status(s["job_id"]) or job_status(s["job_id"]) or {"status": "expired"}
+        out.append({
+            "job_id":     s["job_id"],
+            "kind":       s["kind"],
+            "label":      s["label"],
+            "created_at": s["created_at"],
+            "status":     live.get("status", "unknown"),
+            "queue_position": live.get("queue_position"),
+        })
+    return {"submissions": out}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

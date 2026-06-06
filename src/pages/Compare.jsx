@@ -109,9 +109,11 @@ function UploadPanel({ onAdd }) {
   const [error, setError] = useState('')
 
   function handleFiles(e) {
-    const chosen = Array.from(e.target.files).filter((f) => f.name.endsWith('.tsv'))
+    const chosen = Array.from(e.target.files).filter(
+      (f) => f.name.endsWith('.tsv') || f.name.endsWith('.csv'),
+    )
     setFiles(chosen)
-    if (chosen.length === 0) setError('Please select .tsv files')
+    if (chosen.length === 0) setError('Please select .tsv or .csv files')
     else setError('')
   }
 
@@ -163,8 +165,8 @@ function UploadPanel({ onAdd }) {
             </div>
           </div>
           <div className={s.uploadField}>
-            <label>TSV Metrics File(s) *</label>
-            <input type="file" accept=".tsv" multiple onChange={handleFiles} />
+            <label>TSV / CSV Metrics File(s) *</label>
+            <input type="file" accept=".tsv,.csv" multiple onChange={handleFiles} />
             {files.length > 0 && <span className={s.uploadFileHint}>{files.length} file(s) selected</span>}
           </div>
           <button className="btn-primary" style={{ marginTop: '4px', alignSelf: 'flex-start' }} onClick={handleAdd}>

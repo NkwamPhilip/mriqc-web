@@ -8,7 +8,7 @@ import {
   parseResultsZip,
   parseTSV,
   downloadCSV,
-  addMulticenterDataset,
+  addMulticenterRows,
 } from '../lib/api'
 import MriqcReport from '../components/MriqcReport'
 import BrainModel  from '../components/BrainModel'
@@ -680,7 +680,32 @@ function ResultsStep({ results, config, onReset }) {
 
   function handleAddToCompare() {
     const label = `sub-${config.subjectId}${config.sessionId ? `_${config.sessionId}` : ''}`
-    addMulticenterDataset(label, config.subjectId, config.sessionId, config.modalities.join('+'), files.tsvFiles)
+
+    // Build metric rows from whichever output MRIQC produced:
+    //   • older MRIQC → group TSV files
+    //   • MRIQC ≥ 22  → per-subject JSON (what the dashboard uses)
+    let rows = []
+    if (files.tsvFiles?.length) {
+      for (const { content } of files.tsvFiles) {
+        const { headers, rows: parsed } = parseTSV(content)
+        for (const row of parsed) {
+          const m = {}
+          headers.forEach((h, i) => { m[h] = row[i] ?? '' })
+          rows.push(m)
+        }
+      }
+    } else if (files.jsonMetrics?.length) {
+      // Flatten each subject's JSON to scalar IQMs (skip nested bids_meta/provenance)
+      rows = files.jsonMetrics.map(({ metrics }) => {
+        const flat = {}
+        Object.entries(metrics).forEach(([k, v]) => {
+          if (v !== null && typeof v !== 'object') flat[k] = v
+        })
+        return flat
+      })
+    }
+
+    addMulticenterRows(label, config.subjectId, config.sessionId, config.modalities.join('+'), rows)
     setAddedToCompare(true)
   }
 
