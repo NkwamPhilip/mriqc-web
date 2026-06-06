@@ -75,3 +75,26 @@ export function compareToRef(metric, value, dir) {
     refMedian: median(vals),
   }
 }
+
+/**
+ * The 33-subject HCP / OpenNeuro T1w reference, packaged as a Compare-page
+ * dataset so it can be pinned as an always-present baseline column.
+ * `metrics` is the array of 33 per-subject metric objects (string values,
+ * matching the shape produced by addMulticenterDataset).
+ */
+export function getReferenceDataset() {
+  return {
+    id:        'reference-hcp-openneuro',
+    label:     'HCP / OpenNeuro Reference',
+    modality:  'T1w',
+    subjectId: 'ref',
+    sessionId: '',
+    isReference: true,
+    metrics:   getRows(),          // 33 subject rows
+    addedAt:   null,
+  }
+}
+
+export function referenceSubjectCount() {
+  return getRows().length
+}

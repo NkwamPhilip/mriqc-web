@@ -713,6 +713,9 @@ from email.mime.base      import MIMEBase
 from email                import encoders
 
 _GEMINI_KEY     = os.environ.get("GEMINI_API_KEY",      "")
+# Model is overridable via env so you can switch to a newer free model
+# without a code change (e.g. gemini-2.5-flash) if Google retires one.
+_GEMINI_MODEL   = os.environ.get("GEMINI_MODEL",        "gemini-2.0-flash")
 _SUPPORT_EMAIL  = os.environ.get("SUPPORT_EMAIL",       "")
 _SMTP_HOST      = os.environ.get("SMTP_HOST",           "smtp.gmail.com")
 _SMTP_PORT      = int(os.environ.get("SMTP_PORT",        "587"))
@@ -826,7 +829,14 @@ async def support_chat(payload: dict = Body(...)):
     Body: { "messages": [ {"role":"user","content":"..."}, ... ] }
     Returns a text/event-stream SSE stream of JSON chunks:
       data: {"text": "..."}   (partial response)
+      data: {"error": "..."}  (problem — shown to the user)
       data: [DONE]            (end of stream)
+
+    Implementation: calls the Gemini REST streaming endpoint directly with
+    httpx.  Fully async (no thread/queue bridge) and surfaces BOTH HTTP
+    errors (bad key, retired model) AND empty responses — the previous SDK
+    version silently swallowed empty completions, so the user saw a blank
+    bubble with no explanation.
     """
     if not _GEMINI_KEY:
         raise HTTPException(503, "AI support is not configured — set GEMINI_API_KEY")
@@ -834,65 +844,76 @@ async def support_chat(payload: dict = Body(...)):
     messages = payload.get("messages", [])
     if not messages:
         raise HTTPException(400, "messages array is required")
-    # Clamp to last 20 turns (keeps token count low on the free tier)
-    messages = messages[-20:]
+    messages = messages[-20:]   # clamp history (keeps free-tier tokens low)
 
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        raise HTTPException(503, "google-generativeai package not installed")
+    import httpx
 
-    loop = __import__('asyncio').get_event_loop()
-    import asyncio
-    q: asyncio.Queue = asyncio.Queue()
+    # Build Gemini "contents": user→user, assistant→model.
+    contents = []
+    for m in messages:
+        role = "user" if m.get("role") == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": m.get("content", "")}]})
+    # Gemini requires the first turn to be "user".
+    while contents and contents[0]["role"] != "user":
+        contents.pop(0)
 
-    def _stream_in_thread():
-        """Run the blocking Gemini SDK call in a background thread."""
-        try:
-            genai.configure(api_key=_GEMINI_KEY)
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                system_instruction=_CHAT_SYSTEM,
-            )
-
-            # Convert to Gemini format.
-            # Gemini uses "user" / "model" roles (not "assistant").
-            # History must start with a user turn — skip any leading model
-            # messages (e.g. the welcome message rendered client-side).
-            gemini_history = []
-            for m in messages[:-1]:
-                role = "user" if m["role"] == "user" else "model"
-                gemini_history.append({"role": role, "parts": [m["content"]]})
-            # Drop leading model turns so Gemini doesn't reject the payload.
-            while gemini_history and gemini_history[0]["role"] != "user":
-                gemini_history.pop(0)
-
-            chat     = model.start_chat(history=gemini_history)
-            response = chat.send_message(messages[-1]["content"], stream=True)
-
-            for chunk in response:
-                if chunk.text:
-                    asyncio.run_coroutine_threadsafe(
-                        q.put(("text", chunk.text)), loop)
-        except Exception as e:
-            log.exception("support_chat gemini error")
-            asyncio.run_coroutine_threadsafe(q.put(("error", str(e))), loop)
-        finally:
-            asyncio.run_coroutine_threadsafe(q.put(("done", None)), loop)
-
-    Thread(target=_stream_in_thread, daemon=True).start()
+    body = {
+        "system_instruction": {"parts": [{"text": _CHAT_SYSTEM}]},
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7},
+    }
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/"
+        f"models/{_GEMINI_MODEL}:streamGenerateContent?alt=sse&key={_GEMINI_KEY}"
+    )
 
     async def generate():
+        got_text = False
         try:
-            while True:
-                kind, payload_item = await q.get()
-                if kind == "text":
-                    yield f"data: {json.dumps({'text': payload_item})}\n\n"
-                elif kind == "error":
-                    yield f"data: {json.dumps({'error': payload_item})}\n\n"
-                    break
-                else:   # "done"
-                    break
+            async with httpx.AsyncClient(timeout=90) as client:
+                async with client.stream("POST", url, json=body) as resp:
+                    # ── Non-200 → surface the real Gemini error message ──────
+                    if resp.status_code != 200:
+                        raw = await resp.aread()
+                        msg = f"Gemini error {resp.status_code}"
+                        try:
+                            err = json.loads(raw).get("error", {})
+                            msg = err.get("message", msg)
+                            # Friendlier hint for the two most common causes
+                            if resp.status_code == 404:
+                                msg += f"  (model '{_GEMINI_MODEL}' not found — set GEMINI_MODEL to a current model like gemini-2.5-flash)"
+                            elif resp.status_code in (400, 403):
+                                msg += "  (check your GEMINI_API_KEY is valid)"
+                        except Exception:
+                            pass
+                        log.error("support_chat: %s", msg)
+                        yield f"data: {json.dumps({'error': msg})}\n\n"
+                        return
+
+                    # ── Stream SSE lines ─────────────────────────────────────
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if not data:
+                            continue
+                        try:
+                            obj   = json.loads(data)
+                            cand  = (obj.get("candidates") or [{}])[0]
+                            parts = (cand.get("content") or {}).get("parts") or []
+                            text  = "".join(p.get("text", "") for p in parts)
+                            if text:
+                                got_text = True
+                                yield f"data: {json.dumps({'text': text})}\n\n"
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
+
+            # ── Completed with no text → explain why ─────────────────────────
+            if not got_text:
+                yield f"data: {json.dumps({'error': 'The AI returned an empty response. The model may be unavailable or the request was blocked. Try again, or set GEMINI_MODEL to a current model (e.g. gemini-2.5-flash).'})}\n\n"
+        except Exception as e:
+            log.exception("support_chat stream error")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
         finally:
             yield "data: [DONE]\n\n"
 

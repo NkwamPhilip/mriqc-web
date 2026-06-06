@@ -228,6 +228,38 @@ function descOf(path) {
   return m ? m[1] : null
 }
 
+// ── CSV export ────────────────────────────────────────────────────────────────
+// Flatten every subject's scalar IQMs into one wide CSV table.
+// One row per subject; columns are the union of all scalar metric keys.
+// Nested objects (bids_meta, provenance) are skipped to keep it tabular —
+// the full JSON is always available in the downloaded results ZIP.
+function buildMetricsCsv(jsonMetrics) {
+  if (!jsonMetrics?.length) return ''
+  const keySet = new Set()
+  jsonMetrics.forEach(({ metrics }) => {
+    Object.entries(metrics).forEach(([k, v]) => {
+      if (v !== null && typeof v !== 'object') keySet.add(k)
+    })
+  })
+  const keys   = [...keySet].sort()
+  const header = ['bids_name', ...keys]
+  const rows   = jsonMetrics.map(({ path, metrics }) => {
+    const name = path.split('/').pop().replace('.json', '')
+    return [name, ...keys.map(k => (metrics[k] == null ? '' : String(metrics[k])))]
+  })
+  const esc = c => /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c
+  return [header, ...rows].map(r => r.map(esc).join(',')).join('\n')
+}
+
+function downloadCsv(csv, filename) {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click(); document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 // ── MetricModal — detailed popup when a metric card is clicked ────────────────
 
 function ThresholdScale({ def }) {
@@ -668,13 +700,32 @@ export default function MriqcReport({ jsonMetrics, htmlFiles, svgFigures }) {
           )}
 
           {/* ── IQM metric cards ────────────────────────────────────────── */}
-          <SectionTitle icon={
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-            </svg>
-          }>
-            Image Quality Metrics
-          </SectionTitle>
+          <div className={s.sectionRow}>
+            <SectionTitle icon={
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+              </svg>
+            }>
+              Image Quality Metrics
+            </SectionTitle>
+            <button
+              className={s.exportBtn}
+              onClick={() => {
+                const csv  = buildMetricsCsv(jsonMetrics)
+                const name = jsonMetrics.length > 1
+                  ? `mriqc_iqms_${jsonMetrics.length}subjects.csv`
+                  : `mriqc_iqms_sub-${subId}.csv`
+                downloadCsv(csv, name)
+              }}
+              title="Download every computed IQM for all subjects as a CSV spreadsheet"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Export CSV
+            </button>
+          </div>
           <div className={s.metricsGrid}>
             {defs.map(def => (
               <MetricCard key={def.key} def={def} value={m[def.key]} />

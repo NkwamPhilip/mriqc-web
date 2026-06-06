@@ -200,6 +200,44 @@
 .dsCard:hover .dsRemove { opacity: 1; }
 .dsRemove:hover { background: rgba(239,68,68,0.18); }
 
+/* ── Pinned reference dataset ───────────────────────── */
+.dsCardRef {
+  background: linear-gradient(135deg, rgba(0,200,180,0.08), rgba(0,200,180,0.02));
+  border-color: rgba(0,200,180,0.35);
+}
+.dsCardBadgeRef {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+.dsPinned {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border-radius: var(--r-full, 999px);
+  background: var(--teal);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.refHint {
+  margin-top: 4px;
+  font-size: 0.84rem;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.inlineLink { color: var(--teal); font-weight: 600; text-decoration: none; }
+.inlineLink:hover { text-decoration: underline; }
+
+/* Reference column highlight in the comparison table */
+.refColHead {
+  background: rgba(0,200,180,0.06);
+}
+
 /* ── Upload panel ───────────────────────────────────── */
 .uploadPanel { }
 

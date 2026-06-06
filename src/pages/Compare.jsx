@@ -7,6 +7,7 @@ import {
   parseTSV,
   downloadCSV,
 } from '../lib/api'
+import { getReferenceDataset } from '../lib/reference'
 import s from './Compare.module.css'
 
 // Metrics with display names and quality direction (higher/lower = better)
@@ -56,28 +57,28 @@ function computeStats(values) {
   }
 }
 
-// ── Empty state ───────────────────────────────────────────────────────────────
-function EmptyState() {
-  return (
-    <div className={s.empty}>
-      <div className={s.emptyIcon}>
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
-          <line x1="6" y1="20" x2="6" y2="14"/><path d="M2 20h20"/>
-        </svg>
-      </div>
-      <h3>No datasets yet</h3>
-      <p>Run MRIQC on a dataset and click <strong>Add to Multicenter Comparison</strong> on the results page to build your comparison library.</p>
-      <Link to="/analyze" className="btn-primary" style={{ marginTop: '16px' }}>
-        Analyze a Dataset
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-      </Link>
-    </div>
-  )
-}
-
 // ── Dataset card ──────────────────────────────────────────────────────────────
 function DatasetCard({ ds, onRemove }) {
+  // The pinned reference dataset: distinct styling, non-removable.
+  if (ds.isReference) {
+    return (
+      <div className={`${s.dsCard} ${s.dsCardRef}`}>
+        <div className={`${s.dsCardBadge} ${s.dsCardBadgeRef}`}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+        </div>
+        <div className={s.dsCardInfo}>
+          <span className={s.dsLabel}>{ds.label}</span>
+          <span className={s.dsMeta}>
+            {ds.metrics.length} T1w subjects · OpenNeuro · pinned baseline
+          </span>
+        </div>
+        <span className={s.dsPinned} title="Always available — cannot be removed">Reference</span>
+      </div>
+    )
+  }
+
   const date = new Date(ds.addedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   return (
     <div className={s.dsCard}>
@@ -185,12 +186,15 @@ function ComparisonTable({ datasets, filterModality }) {
     ? datasets
     : datasets.filter((d) => d.modality === filterModality)
 
+  // Identifier / non-metric columns that should never appear as metric rows.
+  const SKIP_KEYS = new Set(['bids_name', 'bids_id', 'subject_id', 'session_id'])
+
   // Gather all metric keys present across all datasets
   const allKeys = useMemo(() => {
     const keys = new Set()
     for (const ds of filtered) {
       for (const row of ds.metrics) {
-        Object.keys(row).forEach((k) => keys.add(k))
+        Object.keys(row).forEach((k) => { if (!SKIP_KEYS.has(k)) keys.add(k) })
       }
     }
     // Priority order: known metrics first
@@ -199,9 +203,13 @@ function ComparisonTable({ datasets, filterModality }) {
     return [...priority.filter((k) => keys.has(k)), ...rest]
   }, [filtered])
 
+  // Mean across ALL of a dataset's scans (so the 33-subject reference shows
+  // its population mean, and single-scan user datasets show that one value).
   function getVal(ds, key) {
     if (!ds.metrics.length) return '—'
-    return ds.metrics[0][key] ?? '—'
+    const nums = ds.metrics.map(r => parseFloat(r[key])).filter(n => !isNaN(n))
+    if (!nums.length) return ds.metrics[0][key] ?? '—'
+    return nums.reduce((a, b) => a + b, 0) / nums.length
   }
 
   function handleSort(key) {
@@ -266,10 +274,19 @@ function ComparisonTable({ datasets, filterModality }) {
                 </button>
               </th>
               {filtered.map((ds) => (
-                <th key={ds.id}>
+                <th key={ds.id} className={ds.isReference ? s.refColHead : ''}>
                   <div className={s.colHeader}>
-                    <span className={s.colLabel}>{ds.label}</span>
-                    <span className={s.colBadge}>{ds.modality}</span>
+                    <span className={s.colLabel}>
+                      {ds.isReference && (
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4, verticalAlign: '-1px' }}>
+                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                        </svg>
+                      )}
+                      {ds.label}
+                    </span>
+                    <span className={s.colBadge}>
+                      {ds.isReference ? `${ds.metrics.length} subjects` : ds.modality}
+                    </span>
                   </div>
                 </th>
               ))}
@@ -340,20 +357,28 @@ function ComparisonTable({ datasets, filterModality }) {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function Compare() {
-  const [datasets, setDatasets] = useState(() => getMulticenterDatasets())
+  const [userDatasets, setUserDatasets] = useState(() => getMulticenterDatasets())
   const [filterModality, setFilterModality] = useState('all')
+
+  // The HCP / OpenNeuro 33-subject reference is always pinned as the first
+  // column so every user dataset is compared against a real population baseline.
+  const referenceDataset = useMemo(() => getReferenceDataset(), [])
+  const allDatasets = useMemo(
+    () => [referenceDataset, ...userDatasets],
+    [referenceDataset, userDatasets],
+  )
 
   function handleRemove(id) {
     const updated = removeMulticenterDataset(id)
-    setDatasets(updated)
+    setUserDatasets(updated)
   }
 
   function handleAdd(label, subjectId, sessionId, modality, tsvFiles) {
     const entry = addMulticenterDataset(label, subjectId, sessionId, modality, tsvFiles)
-    setDatasets((prev) => [...prev, entry])
+    setUserDatasets((prev) => [...prev, entry])
   }
 
-  const modalities = ['all', ...new Set(datasets.map((d) => d.modality))]
+  const modalities = ['all', ...new Set(allDatasets.map((d) => d.modality))]
 
   return (
     <div className={s.page}>
@@ -365,65 +390,65 @@ export default function Compare() {
             Cross-Site <span className="gradient-text">IQM Comparison</span>
           </h1>
           <p className={s.pageDesc}>
-            Compare image quality metrics across scanners, sites, and acquisition protocols.
-            Datasets are stored locally in your browser.
+            Compare your image quality metrics against the <strong>HCP / OpenNeuro
+            33-subject T1w reference</strong> — and across your own scanners, sites,
+            and protocols. Your datasets are stored locally in your browser.
           </p>
         </div>
       </div>
 
       <div className={`${s.pageBody} container`}>
-        {datasets.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <>
-            {/* Dataset management */}
-            <section className={s.section}>
-              <div className={s.sectionHeader}>
-                <h2 className={s.sectionTitle}>
-                  Datasets
-                  <span className={s.count}>{datasets.length}</span>
-                </h2>
-                <UploadPanel onAdd={handleAdd} />
-              </div>
-              <div className={s.datasetList}>
-                {datasets.map((ds) => (
-                  <DatasetCard key={ds.id} ds={ds} onRemove={handleRemove} />
+        {/* Dataset management */}
+        <section className={s.section}>
+          <div className={s.sectionHeader}>
+            <h2 className={s.sectionTitle}>
+              Datasets
+              <span className={s.count}>{allDatasets.length}</span>
+            </h2>
+            <UploadPanel onAdd={handleAdd} />
+          </div>
+          <div className={s.datasetList}>
+            {allDatasets.map((ds) => (
+              <DatasetCard key={ds.id} ds={ds} onRemove={handleRemove} />
+            ))}
+          </div>
+          {userDatasets.length === 0 && (
+            <p className={s.refHint}>
+              The <strong>HCP / OpenNeuro reference</strong> is pinned for you.
+              {' '}<Link to="/analyze" className={s.inlineLink}>Analyze a dataset</Link>
+              {' '}and click <strong>Add to Multicenter Comparison</strong> to compare your own scans against it.
+            </p>
+          )}
+        </section>
+
+        {/* Comparison */}
+        <section className={s.section}>
+          <div className={s.sectionHeader}>
+            <h2 className={s.sectionTitle}>Comparison Table</h2>
+            {modalities.length > 2 && (
+              <div className={s.modalityFilter}>
+                {modalities.map((m) => (
+                  <button
+                    key={m}
+                    className={`${s.filterBtn} ${filterModality === m ? s.filterActive : ''}`}
+                    onClick={() => setFilterModality(m)}
+                  >
+                    {m === 'all' ? 'All Modalities' : m}
+                  </button>
                 ))}
               </div>
-            </section>
-
-            {/* Comparison */}
-            <section className={s.section}>
-              <div className={s.sectionHeader}>
-                <h2 className={s.sectionTitle}>Comparison Table</h2>
-                {modalities.length > 2 && (
-                  <div className={s.modalityFilter}>
-                    {modalities.map((m) => (
-                      <button
-                        key={m}
-                        className={`${s.filterBtn} ${filterModality === m ? s.filterActive : ''}`}
-                        onClick={() => setFilterModality(m)}
-                      >
-                        {m === 'all' ? 'All Modalities' : m}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <ComparisonTable datasets={datasets} filterModality={filterModality} />
-            </section>
-          </>
-        )}
-
-        {datasets.length > 0 && (
-          <div className={s.bottomRow}>
-            <UploadPanel onAdd={handleAdd} />
-            <Link to="/analyze" className={s.analyzeLink}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-              Analyze another dataset
-            </Link>
+            )}
           </div>
-        )}
+          <ComparisonTable datasets={allDatasets} filterModality={filterModality} />
+        </section>
+
+        <div className={s.bottomRow}>
+          <UploadPanel onAdd={handleAdd} />
+          <Link to="/analyze" className={s.analyzeLink}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            Analyze another dataset
+          </Link>
+        </div>
       </div>
     </div>
   )

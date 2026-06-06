@@ -1059,6 +1059,74 @@
 
 .tipBox p { font-size: 0.82rem; color: var(--text-2); line-height: 1.65; }
 
+/* ── Learning carousel (rotating facts while MRIQC runs) ──────────────── */
+.learnBox {
+  width: 100%;
+  max-width: 440px;
+  min-height: 150px;
+  padding: 18px 22px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.learnInner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.learnIn  { opacity: 1; transform: translateY(0); }
+.learnOut { opacity: 0; transform: translateY(6px); }
+
+.learnTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+.learnTag svg { flex-shrink: 0; }
+.learnTitle {
+  margin: 0;
+  font-size: 0.96rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.learnBody {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+/* Progress dots */
+.learnDots {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+.learnDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--border);
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+.learnDot:hover { background: var(--text-3); }
+.learnDotActive { background: var(--teal); transform: scale(1.35); }
+
 .cancelBtn {
   font-family: var(--font-display);
   font-size: 0.85rem;

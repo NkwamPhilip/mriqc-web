@@ -112,6 +112,36 @@
 }
 .sectionTitle svg { color: var(--teal); flex-shrink: 0; }
 
+/* Row that holds a section title + an action button (e.g. Export CSV) */
+.sectionRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sectionRow .sectionTitle {
+  flex: 1;
+}
+.exportBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--teal);
+  border-radius: var(--r-full, 999px);
+  background: var(--teal-dim, rgba(0,200,180,0.1));
+  color: var(--teal);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t), transform var(--t);
+  margin-bottom: 4px;
+}
+.exportBtn:hover { background: var(--teal); color: #fff; transform: translateY(-1px); }
+.exportBtn svg { flex-shrink: 0; }
+
 /* ── Metric cards grid ─────────────────────────────────────────────────────── */
 .metricsGrid {
   display: grid;

@@ -36,6 +36,35 @@ const MRIQC_MESSAGES = [
   'Generating visual reports...', 'Packaging TSV outputs...', 'Compressing results...',
 ]
 
+// ── Learning cards shown while MRIQC runs ─────────────────────────────────────
+// Bite-sized, accurate neuroimaging facts to make the wait educational.
+const LEARNING_CARDS = [
+  { tag: 'Did you know?', title: 'SNR scales with field strength',
+    body: 'Signal-to-noise ratio roughly doubles from 1.5T to 3T. That\'s why the same brain looks "cleaner" on a research 3T scanner than on a clinical 1.5T — your metrics are judged against that context.' },
+  { tag: 'IQM spotlight', title: 'CNR — the segmentation predictor',
+    body: 'Contrast-to-Noise Ratio measures how distinct grey and white matter are. A low CNR is the single best early warning that automated tissue segmentation will struggle downstream.' },
+  { tag: 'Motion matters', title: 'Even 0.2 mm counts',
+    body: 'In fMRI, sub-millimetre head motion introduces systematic, distance-dependent errors in functional connectivity. The field standard flags any volume with framewise displacement above 0.2 mm.' },
+  { tag: 'Under the hood', title: 'What ANTs is doing now',
+    body: 'MRIQC uses ANTs to non-linearly register your brain into MNI standard space. This is the most compute-heavy step — and why more CPU cores make the biggest difference to speed.' },
+  { tag: 'Best practice', title: 'Validate BIDS first',
+    body: 'Running bids-validator before you upload catches 90% of "no participants found" errors. The most common slip is a sub-label mismatch — BIDS labels are case-sensitive.' },
+  { tag: 'IQM spotlight', title: 'EFC detects ghosting',
+    body: 'The Entropy Focus Criterion uses Shannon entropy to detect blurring and ghosting. When motion smears signal into the image background, EFC rises — a clever, reference-free quality check.' },
+  { tag: 'Did you know?', title: 'The "hat" mask',
+    body: 'MRIQC carves out a mask of the air around the head — but deliberately excludes the region in front of the face, so eye movement noise doesn\'t contaminate background noise estimates.' },
+  { tag: 'Open science', title: 'Your metrics are comparable',
+    body: 'Because MRIQC computes the same IQMs everywhere, you can pool quality metrics across scanners and sites — the foundation of large multi-centre studies like ABCD and HCP.' },
+  { tag: 'IQM spotlight', title: 'tSNR is fMRI\'s lifeblood',
+    body: 'Temporal SNR captures how stable each voxel\'s signal is over time. Since the BOLD response is only a 1–3% signal change, a tSNR below 20 makes real activation very hard to detect.' },
+  { tag: 'Did you know?', title: 'INU and the bias field',
+    body: 'Intensity non-uniformity is a smooth brightness gradient caused by the scanner\'s B1 field. MRIQC estimates it with the same N4 algorithm used to correct images before analysis.' },
+  { tag: 'Quality first', title: 'Garbage in, garbage out',
+    body: 'A landmark finding: low scan quality can masquerade as real group differences in brain structure. Rigorous QC with tools like MRIQC protects your study from false conclusions.' },
+  { tag: 'Under the hood', title: 'Why a visual report?',
+    body: 'Numbers alone can miss artefacts a human eye catches instantly. MRIQC pairs every IQM with mosaic brain slices so you can confirm what the metrics suggest.' },
+]
+
 // ── Shared helpers ───────────────────────────────────────────────────────────
 function fmtSize(b) {
   return b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`
@@ -482,6 +511,50 @@ function BidsReadyStep({ bidsBlob, bidsFiles, config, onDownload, onContinue, on
   )
 }
 
+// ── Rotating learning carousel (shown while MRIQC runs) ───────────────────────
+function LearningCarousel() {
+  // Start on a random card so repeat visits feel fresh
+  const [idx, setIdx] = useState(() => Math.floor(Math.random() * LEARNING_CARDS.length))
+  const [fade, setFade] = useState(true)
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      setFade(false)                                  // fade out
+      setTimeout(() => {
+        setIdx(i => (i + 1) % LEARNING_CARDS.length)  // swap card
+        setFade(true)                                 // fade in
+      }, 350)
+    }, 7000)
+    return () => clearInterval(tick)
+  }, [])
+
+  const card = LEARNING_CARDS[idx]
+  const go = (n) => { setFade(false); setTimeout(() => { setIdx(n); setFade(true) }, 200) }
+
+  return (
+    <div className={s.learnBox}>
+      <div className={`${s.learnInner} ${fade ? s.learnIn : s.learnOut}`}>
+        <span className={s.learnTag}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9.663 17h4.673M12 3a6 6 0 0 0-3.6 10.8c.4.3.6.7.6 1.2v.5h6v-.5c0-.5.2-.9.6-1.2A6 6 0 0 0 12 3z"/>
+          </svg>
+          {card.tag}
+        </span>
+        <h4 className={s.learnTitle}>{card.title}</h4>
+        <p className={s.learnBody}>{card.body}</p>
+      </div>
+      <div className={s.learnDots}>
+        {LEARNING_CARDS.map((_, i) => (
+          <button key={i}
+            className={`${s.learnDot} ${i === idx ? s.learnDotActive : ''}`}
+            onClick={() => go(i)}
+            aria-label={`Card ${i + 1}`} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── STEP 4: MRIQC Processing ──────────────────────────────────────────────────
 function ProcessingStep({ progress, statusMsg, elapsed, queueInfo, onCancel }) {
   const isQueued = !!queueInfo && queueInfo.status === 'queued'
@@ -566,13 +639,17 @@ function ProcessingStep({ progress, statusMsg, elapsed, queueInfo, onCancel }) {
           </div>
         </div>
 
-        <div className={s.tipBox}>
-          <span className={s.tipLabel}>{isQueued ? 'While you wait' : 'About MRIQC'}</span>
-          <p>{isQueued
-            ? 'WebMRIQC serves researchers across Africa and beyond. A fair compute queue ensures every submission is processed in order — your place is reserved.'
-            : 'MRIQC uses ANTs, FSL, and Nipype under the hood. It computes over 50 image quality metrics and generates publication-ready visual reports. Processing typically takes 5–15 minutes per participant.'
-          }</p>
-        </div>
+        {/* While queued: show the fair-queue note. While running: rotate
+            through bite-sized neuroimaging learning cards to make the wait
+            educational and engaging. */}
+        {isQueued ? (
+          <div className={s.tipBox}>
+            <span className={s.tipLabel}>While you wait</span>
+            <p>WebMRIQC serves researchers across Africa and beyond. A fair compute queue ensures every submission is processed in order — your place is reserved.</p>
+          </div>
+        ) : (
+          <LearningCarousel />
+        )}
         <button className={s.cancelBtn} onClick={onCancel}>Cancel</button>
       </div>
     </div>

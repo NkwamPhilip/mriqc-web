@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir \
         "uvicorn[standard]" \
         python-multipart \
         dcm2bids \
-        google-generativeai
+        httpx
 
 # ── App code ──────────────────────────────────────────────────────────────────
 WORKDIR /webmriqc
