@@ -1011,7 +1011,7 @@ async def support_ticket(
 #                each boot (existing logins are invalidated on restart).
 # ══════════════════════════════════════════════════════════════════════════════
 
-import sqlite3, hmac, base64, time
+import sqlite3, hmac, base64, time, secrets
 from threading import Lock as _ThreadLock
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
