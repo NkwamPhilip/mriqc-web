@@ -1,0 +1,146 @@
+/* ── My Submissions dashboard ─────────────────────────────────────────────── */
+.page {
+  min-height: calc(100vh - 72px);
+  padding: 100px 0 60px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.title {
+  font-size: 1.9rem;
+  font-weight: 800;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+.sub { font-size: 0.9rem; color: var(--text-2); margin: 0; }
+
+.headerActions { display: flex; align-items: center; gap: 10px; }
+.liveDot {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--teal);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.refreshBtn, .newBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border-radius: 9px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.refreshBtn {
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-2);
+}
+.refreshBtn:hover { border-color: var(--teal); color: var(--teal); }
+.newBtn { border: none; background: var(--teal); color: #fff; }
+.newBtn:hover { background: var(--teal-dark, #00a896); }
+
+.error {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #dc2626;
+  font-size: 0.85rem;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+.muted { color: var(--text-3); font-size: 0.9rem; }
+
+/* ── Empty ──────────────────────────────────────────────────────────────── */
+.empty {
+  text-align: center;
+  padding: 60px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  background: var(--bg-2);
+}
+.empty h3 { margin: 0 0 6px; color: var(--text); font-size: 1.1rem; }
+.empty p { margin: 0 0 18px; color: var(--text-2); font-size: 0.9rem; }
+.empty .newBtn { display: inline-flex; }
+
+/* ── List ───────────────────────────────────────────────────────────────── */
+.list { display: flex; flex-direction: column; gap: 10px; }
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition: border-color 0.15s;
+}
+.row:hover { border-color: rgba(0, 200, 180, 0.3); }
+
+.rowMain { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rowLabel {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.rowMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+.kindBadge {
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+/* ── Status badge ───────────────────────────────────────────────────────── */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.statusDot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+.queued   { background: rgba(245, 158, 11, 0.12); color: #d97706; }
+.running  { background: rgba(0, 200, 180, 0.14);  color: #009e8e; }
+.running .statusDot { animation: pulse 1.4s ease-in-out infinite; }
+.done     { background: rgba(34, 197, 94, 0.14);  color: #16a34a; }
+.error    { background: rgba(239, 68, 68, 0.12);  color: #dc2626; }
+.expired  { background: var(--bg-3);              color: var(--text-3); }
+
+.queuePos {
+  margin-left: 2px;
+  font-family: var(--font-mono);
+  opacity: 0.85;
+}
+
+.note {
+  margin-top: 26px;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  line-height: 1.6;
+}

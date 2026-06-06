@@ -138,6 +138,7 @@ export function convertDicomLocally(file, config, onUploadProgress, onConversion
     xhr.open('POST', `${API}/convert-dicom`)
     xhr.responseType = 'text'    // expecting JSON {job_id}, not a blob
     xhr.timeout = 1_800_000      // 30 min ceiling for the upload itself
+    const _auth1 = authHeader(); if (_auth1) xhr.setRequestHeader('Authorization', _auth1)
     xhr.send(fd)
   })
 }
@@ -190,6 +191,7 @@ export function runMRIQC(file, config, onUploadProgress, onStatusUpdate) {
     xhr.open('POST', `${API}/run-mriqc`)
     xhr.responseType = 'text'
     xhr.timeout = 7_200_000      // 2 hr ceiling for the upload
+    const _auth2 = authHeader(); if (_auth2) xhr.setRequestHeader('Authorization', _auth2)
     xhr.send(fd)
   })
 }
@@ -364,4 +366,34 @@ export function removeMulticenterDataset(id) {
   const datasets = getMulticenterDatasets().filter((d) => d.id !== id)
   localStorage.setItem('mriqc_mc_datasets', JSON.stringify(datasets))
   return datasets
+}
+
+// ── Auth API ──────────────────────────────────────────────────────────────────
+async function authFetch(path, { method = 'GET', body = null, token = null } = {}) {
+  const headers = {}
+  if (body)  headers['Content-Type'] = 'application/json'
+  const bearer = token || getToken()
+  if (bearer) headers['Authorization'] = `Bearer ${bearer}`
+  const res = await fetch(`${API}${path}`, {
+    method, headers, body: body ? JSON.stringify(body) : undefined,
+  })
+  let data = null
+  try { data = await res.json() } catch { /* ignore */ }
+  if (!res.ok) {
+    throw new Error((data && data.detail) || `Request failed (${res.status})`)
+  }
+  return data
+}
+
+export function registerUser({ email, password, name, institution }) {
+  return authFetch('/auth/register', { method: 'POST', body: { email, password, name, institution } })
+}
+export function loginUser({ email, password }) {
+  return authFetch('/auth/login', { method: 'POST', body: { email, password } })
+}
+export function fetchMe(token) {
+  return authFetch('/auth/me', { token })
+}
+export function fetchMySubmissions(token) {
+  return authFetch('/auth/submissions', { token })
 }

@@ -1,5 +1,6 @@
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
+import { useAuth } from '../context/AuthContext'
 import s from './Navbar.module.css'
 
 function ThemeToggle() {
@@ -43,8 +44,16 @@ function ThemeToggle() {
 
 export default function Navbar() {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
+  const { user, logout } = useAuth()
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+
+  function handleLogout() {
+    logout()
+    setMenuOpen(false)
+    navigate('/')
+  }
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 20)
@@ -77,6 +86,19 @@ export default function Navbar() {
             <a href="/#iqm-guide" className={s.link} onClick={() => setMenuOpen(false)}>IQM Guide</a>
             <a href="/#references" className={s.link} onClick={() => setMenuOpen(false)}>References</a>
             <Link to="/compare" className={s.link} onClick={() => setMenuOpen(false)}>Multicenter</Link>
+
+            {user ? (
+              <>
+                <Link to="/submissions" className={s.link} onClick={() => setMenuOpen(false)}>My Submissions</Link>
+                <button className={s.authLink} onClick={handleLogout}>Sign out</button>
+                <span className={s.userChip} title={user.email}>
+                  {(user.name || user.email || '?').trim().charAt(0).toUpperCase()}
+                </span>
+              </>
+            ) : (
+              <Link to="/login" className={s.authLink} onClick={() => setMenuOpen(false)}>Sign in</Link>
+            )}
+
             <Link to="/analyze" className="btn-primary" style={{ padding: '10px 22px', fontSize: '0.88rem' }}>
               Launch App
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

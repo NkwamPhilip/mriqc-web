@@ -1,0 +1,114 @@
+/* ── Shared auth pages (Login / Register) ─────────────────────────────────── */
+.page {
+  min-height: calc(100vh - 72px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px 60px;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 32px 30px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.1);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 6px;
+}
+.logoText { font-family: var(--font-display); font-weight: 700; font-size: 1.1rem; color: var(--text); }
+.logoAccent { color: var(--teal); }
+
+.title {
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text);
+  margin: 8px 0 4px;
+}
+.subtitle {
+  text-align: center;
+  font-size: 0.86rem;
+  color: var(--text-2);
+  margin: 0 0 24px;
+}
+
+.form { display: flex; flex-direction: column; gap: 14px; }
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+.label {
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-2);
+}
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.92rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.input:focus { border-color: var(--teal); }
+.input::placeholder { color: var(--text-3); }
+
+.row { display: flex; gap: 12px; }
+.row .field { flex: 1; }
+
+.error {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #dc2626;
+  font-size: 0.82rem;
+  padding: 9px 12px;
+  border-radius: 8px;
+  margin: 0;
+}
+
+.submit {
+  margin-top: 6px;
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  background: var(--teal);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.submit:hover:not(:disabled) { background: var(--teal-dark, #00a896); }
+.submit:disabled { opacity: 0.6; cursor: default; }
+
+.footer {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-2);
+  margin: 20px 0 0;
+}
+.footerLink { color: var(--teal); font-weight: 600; text-decoration: none; }
+.footerLink:hover { text-decoration: underline; }
+
+.guestNote {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  margin: 14px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-2);
+}
+.guestLink { color: var(--text-2); text-decoration: underline; }
