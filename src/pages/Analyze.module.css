@@ -889,8 +889,20 @@
 /* ── Scan animation (Processing step) ──────────────── */
 .scanWrapper {
   position: relative;
-  width: 180px;
-  height: 180px;
+  width: 250px;
+  height: 250px;
+  flex-shrink: 0;       /* never let flexbox stretch it */
+  overflow: hidden;     /* clip the WebGL canvas to the box */
+}
+
+/* The BrainModel <div> must exactly fill the 250×250 wrapper so the
+   component reads clientWidth/clientHeight = 250 and renders at that
+   size — otherwise it falls back to its internal 480px default and
+   overflows, overlapping the text below. */
+.scanBrain {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .scanLineProc {
