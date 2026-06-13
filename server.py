@@ -52,12 +52,14 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 log = logging.getLogger("webmriqc")
 
 # ── Resolve tool paths once at startup ───────────────────────────────────────
-DCM2BIDS_BIN = shutil.which("dcm2bids")
-DCM2NIIX_BIN = shutil.which("dcm2niix")
-MRIQC_BIN    = shutil.which("mriqc")
+DCM2BIDS_BIN          = shutil.which("dcm2bids")
+DCM2BIDS_HELPER_BIN   = shutil.which("dcm2bids_helper")
+DCM2BIDS_SCAFFOLD_BIN = shutil.which("dcm2bids_scaffold")
+DCM2NIIX_BIN          = shutil.which("dcm2niix")
+MRIQC_BIN             = shutil.which("mriqc")
 log.info("PATH=%s", os.environ.get("PATH", ""))
-log.info("Tool paths → dcm2bids=%s  dcm2niix=%s  mriqc=%s",
-         DCM2BIDS_BIN, DCM2NIIX_BIN, MRIQC_BIN)
+log.info("Tool paths → dcm2bids=%s  helper=%s  scaffold=%s  dcm2niix=%s  mriqc=%s",
+         DCM2BIDS_BIN, DCM2BIDS_HELPER_BIN, DCM2BIDS_SCAFFOLD_BIN, DCM2NIIX_BIN, MRIQC_BIN)
 
 app = FastAPI(title="WebMRIQC")
 app.add_middleware(
@@ -353,170 +355,224 @@ def classify_series(meta: dict, has_bval: bool, n_vols):
             "junk": False}
 
 
-# BIDS entity order for filename assembly (subset relevant to MRIQC inputs)
-_ENTITY_ORDER = ("task", "acq", "ce", "rec", "dir", "run", "echo", "part")
-
-
-def _bids_stem(subj: str, ses: str, entities: dict, suffix: str) -> str:
-    parts = [f"sub-{subj}"] + ([f"ses-{ses}"] if ses else [])
-    for k in _ENTITY_ORDER:
-        v = entities.get(k)
-        if v not in (None, ""):
-            parts.append(f"{k}-{v}")
-    parts.append(suffix)
-    return "_".join(parts)
-
-
-def run_dcm2niix(dicom_dir: Path, out_dir: Path) -> str:
-    """Convert *every* series under dicom_dir to NIfTI+JSON (+bval/bvec)."""
-    binary = DCM2NIIX_BIN or "dcm2niix"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # -b y  BIDS sidecars · -z y  gzip · -f %s_%d  seriesNo_description (unique)
-    cmd = [binary, "-b", "y", "-z", "y", "-f", "%s_%d",
-           "-o", str(out_dir), str(dicom_dir)]
+def _run_cmd(cmd: list, label: str):
+    """Run a subprocess, log truncated output, return (returncode, combined log)."""
     log.info("CMD: %s", " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True, env=os.environ.copy())
-    log.info("dcm2niix stdout: %s", (r.stdout or "(empty)")[-2000:])
+    if r.stdout.strip():
+        log.info("%s stdout: %s", label, r.stdout[-2000:])
     if r.stderr.strip():
-        log.info("dcm2niix stderr: %s", r.stderr[-2000:])
-    # dcm2niix returns non-zero only on hard failure; individual bad series are
-    # skipped while the rest still convert — emptiness is caught downstream.
-    return f"CMD: {' '.join(cmd)}\n\n{r.stdout}\n{r.stderr}".strip()
+        log.info("%s stderr: %s", label, r.stderr[-2000:])
+    return r.returncode, f"$ {' '.join(cmd)}\n{r.stdout}\n{r.stderr}".strip()
+
+
+def _custom_entities(entities: dict) -> list:
+    """Turn a {task, acq, dir, run, echo} dict into dcm2bids custom_entities tokens."""
+    order = ("task", "acq", "dir", "run", "echo")
+    return [f"{k}-{entities[k]}" for k in order if entities.get(k) not in (None, "")]
+
+
+def build_dcm2bids_config(helper_dir: Path, config_path: Path,
+                          fallback_suffix: str = "T1w"):
+    """
+    Generate a dcm2bids config FROM the helper sidecars, so its criteria are
+    guaranteed to match this subject's real series — the key to "the right files
+    get picked". classify_series() decides each series' datatype/suffix; junk
+    (localizers / derived maps) is omitted; a series with no standard-modality
+    match is mapped to anat/<fallback_suffix> instead of being dropped (handles
+    de-identified / NIfTI-derived DICOMs).
+
+    Returns (descriptions, kept_lines, skipped_lines).
+    """
+    kept, skipped_lines = [], []
+    for js in sorted(helper_dir.glob("*.json")):
+        nii = js.with_suffix(".nii.gz")
+        if not nii.exists():
+            nii = js.with_suffix(".nii")
+        if not nii.exists():
+            continue
+        try:
+            meta = json.loads(js.read_text())
+        except Exception:
+            meta = {}
+        decision = classify_series(meta, js.with_suffix(".bval").exists(), _nii_nvols(nii))
+        label = meta.get("SeriesDescription") or js.stem
+        if "skip" in decision and decision.get("junk"):
+            skipped_lines.append(f"  [-] {label}  ({decision['skip']})")
+            continue
+        if "skip" in decision:                       # non-junk, unrecognized → fallback
+            datatype, suffix, entities, sidecar, fb = "anat", fallback_suffix, {}, {}, True
+        else:
+            datatype, suffix = decision["datatype"], decision["suffix"]
+            entities = dict(decision.get("entities", {}))
+            sidecar = decision.get("sidecar", {})
+            fb = False
+        kept.append({"series": meta.get("SeriesNumber", 0),
+                     "desc": meta.get("SeriesDescription", ""),
+                     "datatype": datatype, "suffix": suffix, "entities": entities,
+                     "sidecar": sidecar, "label": label, "fallback": fb})
+
+    # run- numbering for repeated acquisitions of the same type
+    groups = {}
+    for k in kept:
+        gkey = (k["datatype"], k["suffix"], k["entities"].get("task"),
+                k["entities"].get("dir"), k["entities"].get("acq"))
+        groups.setdefault(gkey, []).append(k)
+    for members in groups.values():
+        if len(members) > 1:
+            for i, k in enumerate(sorted(members, key=lambda x: x["series"]), 1):
+                k["entities"]["run"] = i
+
+    # one description per series, with criteria that match exactly one series
+    desc_counts = {}
+    for k in kept:
+        desc_counts[k["desc"]] = desc_counts.get(k["desc"], 0) + 1
+    descriptions, kept_lines = [], []
+    for k in kept:
+        # prefer a unique, non-empty SeriesDescription; else the always-unique
+        # SeriesNumber — so dcm2bids never maps one series to two descriptions.
+        if k["desc"] and desc_counts[k["desc"]] == 1:
+            criteria = {"SeriesDescription": k["desc"]}
+        else:
+            criteria = {"SeriesNumber": k["series"]}
+        entry = {"datatype": k["datatype"], "suffix": k["suffix"], "criteria": criteria}
+        ents = _custom_entities(k["entities"])
+        if ents:
+            entry["custom_entities"] = ents
+        if k["sidecar"]:
+            entry["sidecar_changes"] = k["sidecar"]
+        descriptions.append(entry)
+        kept_lines.append(f"  [+] {k['label']}  ->  {k['datatype']}/{k['suffix']}"
+                          f"{''.join('_' + e for e in ents)}"
+                          f"{' (fallback)' if k['fallback'] else ''}")
+
+    config_path.write_text(json.dumps(
+        {"search_method": "fnmatch", "case_sensitive": False,
+         "descriptions": descriptions}, indent=2))
+    return descriptions, kept_lines, skipped_lines
+
+
+def _validate_bids(bids_out: Path, subj_id: str) -> str:
+    """
+    Best-effort, NON-BLOCKING BIDS check. Confirms what MRIQC needs
+    (dataset_description + at least one image with a JSON sidecar) and runs the
+    official bids-validator if it is installed. Never raises.
+    """
+    lines = ["-- validation (non-blocking) ------------------------------"]
+    ok_dd  = (bids_out / "dataset_description.json").exists()
+    images = list((bids_out / f"sub-{subj_id}").rglob("*.nii.gz"))
+    paired = bool(images) and all(
+        i.with_suffix("").with_suffix(".json").exists() for i in images)
+    lines.append(f"  [{'+' if ok_dd  else '-'}] dataset_description.json")
+    lines.append(f"  [{'+' if images else '-'}] {len(images)} image(s) under sub-{subj_id}")
+    lines.append(f"  [{'+' if paired else '-'}] every image has a JSON sidecar")
+    validator = shutil.which("bids-validator")
+    if validator:
+        try:
+            rc, out = _run_cmd([validator, str(bids_out)], "bids-validator")
+            lines.append(f"  bids-validator exit={rc} (informational only):")
+            lines.append(out[-1500:])
+        except Exception as e:
+            lines.append(f"  bids-validator could not run: {e}")
+    else:
+        lines.append("  bids-validator not installed — structural check only.")
+    return "\n".join(lines)
 
 
 def build_bids_from_dicom(dicom_dir: Path, bids_out: Path,
                           subj_id: str, ses_id: str,
                           fallback_suffix: str = "T1w") -> str:
     """
-    Robust DICOM→BIDS for a single subject:
-      1. dcm2niix converts EVERY series to NIfTI+JSON in a temp dir.
-      2. Each image is classified from its sidecar (metadata-first).
-      3. Accepted images are renamed to valid BIDS — with run- entities for
-         repeats — and moved into sub-XX/[ses-YY]/<datatype>/.
-
-    Fallback rescue: if no series matches a standard modality (common for
-    de-identified / NIfTI-derived DICOMs, which are tagged DERIVED/SECONDARY
-    with generic names), every real, non-junk image volume is placed as
-    anat/<fallback_suffix>, so a valid, NON-EMPTY dataset is always produced.
-    Raises RuntimeError (with the per-series breakdown) only when there is no
-    real image at all — an empty result can never pass silently.
+    Standard dcm2bids conversion for one subject:
+      1. dcm2bids_scaffold      — create the BIDS skeleton.
+      2. dcm2bids_helper        — convert every series to NIfTI+JSON to inspect.
+      3. build_dcm2bids_config  — generate a config FROM those sidecars so the
+         criteria match this subject's real series (incl. de-identified scans).
+      4. dcm2bids               — pick the matched files and place them in BIDS.
+      5. validate               — non-blocking sanity check.
+    Raises RuntimeError (with the helper breakdown) only if no image lands in the
+    dataset, so MRIQC is always handed a non-empty BIDS folder.
     """
-    tmp_nii = bids_out / "tmp_nifti"
-    conv_log = run_dcm2niix(dicom_dir, tmp_nii)
+    full_log = []
 
-    # ── gather every converted image ─────────────────────────────────────────
-    images = []
-    for js in sorted(tmp_nii.glob("*.json")):
-        nii = js.with_suffix(".nii.gz")
-        if not nii.exists():
-            nii = js.with_suffix(".nii")
-        if not nii.exists():
-            continue                                  # sidecar with no image
-        try:
-            meta = json.loads(js.read_text())
-        except Exception:
-            meta = {}
-        bval = js.with_suffix(".bval")
-        bvec = js.with_suffix(".bvec")
-        images.append({
-            "json_path": js, "nii_path": nii,
-            "bval": bval if bval.exists() else None,
-            "bvec": bvec if bvec.exists() else None,
-            "meta": meta, "nvols": _nii_nvols(nii),
-            "series": meta.get("SeriesNumber", 0),
-            "label": meta.get("SeriesDescription") or js.stem,
-            "size": nii.stat().st_size,
-        })
+    # 1. scaffold ─────────────────────────────────────────────────────────────
+    rc, out = _run_cmd([DCM2BIDS_SCAFFOLD_BIN or "dcm2bids_scaffold",
+                        "-o", str(bids_out), "--force"], "scaffold")
+    full_log.append(out)
+    if rc != 0:
+        raise RuntimeError(f"dcm2bids_scaffold failed (exit {rc}):\n{out[-1500:]}")
 
-    # ── pass 1: classify into standard modalities ────────────────────────────
-    accepted, skipped = [], []
-    for im in images:
-        d = classify_series(im["meta"], im["bval"] is not None, im["nvols"])
-        if "skip" in d:
-            skipped.append((im, d))
-        else:
-            d.update(im)
-            accepted.append(d)
+    # 2. helper → tmp_dcm2bids/helper/*.{nii.gz,json} ─────────────────────────
+    rc, out = _run_cmd([DCM2BIDS_HELPER_BIN or "dcm2bids_helper",
+                        "-d", str(dicom_dir), "-o", str(bids_out), "--force"], "helper")
+    full_log.append(out)
+    helper_dir = bids_out / "tmp_dcm2bids" / "helper"
+    if rc != 0 or not helper_dir.exists():
+        raise RuntimeError(f"dcm2bids_helper failed (exit {rc}):\n{out[-1500:]}")
 
-    # ── pass 2 (fallback rescue): no standard match → keep the real volumes ───
-    used_fallback = False
-    if not accepted:
-        used_fallback = True
-        for im, d in skipped:
-            if d.get("junk") or im["size"] < 50_000:   # drop localizer/report/tiny
-                continue
-            im["_rescued"] = True
-            entry = {"datatype": "anat", "suffix": fallback_suffix, "entities": {}}
-            entry.update(im)
-            accepted.append(entry)
-
-    # ── assign run- entities to repeated acquisitions ────────────────────────
-    groups: dict = {}
-    for d in accepted:
-        key = (d["datatype"], d["suffix"], d["entities"].get("task"),
-               d["entities"].get("dir"), d["entities"].get("acq"))
-        groups.setdefault(key, []).append(d)
-    for members in groups.values():
-        if len(members) > 1:
-            for i, d in enumerate(sorted(members, key=lambda x: x["series"]), 1):
-                d["entities"]["run"] = i
-
-    # ── lay out the BIDS tree ────────────────────────────────────────────────
-    placed = []
-    for d in accepted:
-        dest_dir = bids_out / f"sub-{subj_id}" / (f"ses-{ses_id}" if ses_id else "") / d["datatype"]
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        stem = _bids_stem(subj_id, ses_id, d["entities"], d["suffix"])
-
-        sidecar = dict(d["meta"])
-        sidecar.update(d.get("sidecar", {}))          # e.g. TaskName for bold
-        (dest_dir / f"{stem}.json").write_text(json.dumps(sidecar, indent=2))
-        shutil.move(str(d["nii_path"]), str(dest_dir / f"{stem}.nii.gz"))
-        if d.get("bval"):
-            shutil.move(str(d["bval"]), str(dest_dir / f"{stem}.bval"))
-        if d.get("bvec"):
-            shutil.move(str(d["bvec"]), str(dest_dir / f"{stem}.bvec"))
-        placed.append(f"{d['label']}  ->  {d['datatype']}/{stem}.nii.gz")
-
-    shutil.rmtree(tmp_nii, ignore_errors=True)
-
-    # ── summary + hard guarantee against an empty result ─────────────────────
-    summary = ["", "-- BIDS conversion summary --------------------------------"]
-    if used_fallback:
-        summary.append(
-            f"NOTE: no standard modality name was found; placed the real image "
-            f"series as anat/{fallback_suffix} by fallback. If a scan is actually "
-            f"T2w/FLAIR/bold, pass the correct modality (fallback_suffix).")
-    summary.append(f"placed {len(placed)} image(s):")
-    summary += [f"  [+] {p}" for p in placed]
-    shown_skips = [(im, d) for im, d in skipped if not im.get("_rescued")]
-    if shown_skips:
-        summary.append(f"skipped {len(shown_skips)} series:")
-        summary += [f"  [-] {im['label']}  ({d['skip']})" for im, d in shown_skips]
-    conv_log += "\n" + "\n".join(summary)
-
-    if not placed:
+    # 3. generate the config from the helper sidecars ─────────────────────────
+    config_path = bids_out / "code" / "dcm2bids_config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptions, kept_lines, skipped_lines = build_dcm2bids_config(
+        helper_dir, config_path, fallback_suffix)
+    full_log.append("-- generated dcm2bids config --------------------------------\n"
+                    f"config: {config_path}\n" + "\n".join(kept_lines or ["  (none)"])
+                    + (("\nomitted (junk/localizer/derived):\n" + "\n".join(skipped_lines))
+                       if skipped_lines else ""))
+    if not descriptions:
         raise RuntimeError(
-            "No BIDS-usable images were produced. dcm2niix converted "
-            f"{len(images)} image(s), but none were real, non-localizer volumes:\n"
-            + "\n".join(f"  - {im['label']}  ({d['skip']})" for im, d in skipped)
-            + "\n\nUpload a subject that contains an anatomical/functional scan, "
-              "or share a SeriesDescription so a rule can be added to classify_series()."
+            "No usable series found by dcm2bids_helper — only junk/localizer/"
+            "derived images were present:\n" + "\n".join(skipped_lines)
+            + "\n\nUpload a subject that contains an anatomical/functional scan."
         )
-    log.info("BIDS layout complete: %d placed, %d skipped%s",
-             len(placed), len(shown_skips), " (fallback)" if used_fallback else "")
-    return conv_log
+
+    # 4. run dcm2bids — it picks the matched files and lays out the BIDS tree ──
+    cmd = [DCM2BIDS_BIN or "dcm2bids", "-d", str(dicom_dir), "-p", subj_id,
+           "-c", str(config_path), "-o", str(bids_out),
+           "--auto_extract_entities", "--force_dcm2bids", "--clobber"]
+    if ses_id:
+        cmd += ["-s", ses_id]
+    rc, out = _run_cmd(cmd, "dcm2bids")
+    full_log.append(out)
+    if rc != 0:
+        raise RuntimeError(f"dcm2bids failed (exit {rc}):\n{out[-2000:]}")
+
+    # 5. hard guarantee MRIQC gets data, then non-blocking validation ─────────
+    sub_dir = bids_out / f"sub-{subj_id}"
+    images  = list(sub_dir.rglob("*.nii.gz")) if sub_dir.exists() else []
+    if not images:
+        raise RuntimeError(
+            "dcm2bids ran but placed no images in the BIDS folder (config did not "
+            "match). Helper series were:\n" + "\n".join(kept_lines + skipped_lines)
+        )
+
+    # overwrite the scaffold's empty README / dataset_description Name so the
+    # dataset is clean (scaffold ships a 0-byte README that fails validation)
+    create_bids_top_level_files(bids_out, subj_id)
+
+    full_log.append(_validate_bids(bids_out, subj_id))
+    full_log.append(f"RESULT: {len(images)} image(s) in sub-{subj_id} — ready for MRIQC")
+
+    # tidy the working dir so the packaged BIDS zip is clean
+    shutil.rmtree(bids_out / "tmp_dcm2bids", ignore_errors=True)
+    log.info("BIDS conversion complete: %d image(s) for sub-%s", len(images), subj_id)
+    return "\n\n".join(full_log)
 
 
 def create_bids_top_level_files(bids_dir: Path, subject_id: str):
-    dd = bids_dir / "dataset_description.json"
-    if not dd.exists():
-        dd.write_text(json.dumps({
-            "Name": "MRIQC Dataset", "BIDSVersion": "1.6.0", "License": "CC0",
-            "Authors": ["Philip Nkwam", "Udunna Anazodo", "Maruf Adewole", "Sekinat Aderibigbe"],
-            "DatasetType": "raw",
-        }, indent=2))
-    (bids_dir / "README").write_text("# BIDS Dataset\nGenerated by WebMRIQC.\n")
+    # Always (over)write dataset_description — dcm2bids_scaffold ships one with an
+    # empty Name and a single blank author, which the BIDS validator flags.
+    (bids_dir / "dataset_description.json").write_text(json.dumps({
+        "Name": "MRIQC Dataset", "BIDSVersion": "1.6.0", "License": "CC0",
+        "Authors": ["Philip Nkwam", "Udunna Anazodo", "Maruf Adewole", "Sekinat Aderibigbe"],
+        "DatasetType": "raw",
+    }, indent=2))
+    # Non-empty README (scaffold's is 0 bytes → EMPTY_FILE error).
+    (bids_dir / "README").write_text(
+        "# BIDS Dataset\n\n"
+        "Generated by WebMRIQC (DICOM to BIDS via dcm2bids) for MRIQC quality control.\n"
+        "Each subject folder contains the converted anatomical/functional NIfTI images "
+        "and their JSON sidecars.\n")
     (bids_dir / "CHANGES").write_text(f"1.0.0 {datetime.date.today()}\n  - Initial BIDS conversion\n")
     pts = bids_dir / "participants.tsv"
     if not pts.exists():
@@ -680,14 +736,14 @@ async def convert_dicom(
             # ── Convert ──────────────────────────────────────────────────────
             bids_out = work_dir / "bids"
             bids_out.mkdir(parents=True, exist_ok=True)
-            log.info("[%s] Converting DICOM→BIDS via dcm2niix (binary=%s) …", job_id, DCM2NIIX_BIN)
+            log.info("[%s] Converting DICOM→BIDS via dcm2bids (binary=%s) …", job_id, DCM2BIDS_BIN)
             try:
                 conv_log = build_bids_from_dicom(dicom_dir, bids_out, participant_label,
                                                  session_id, fallback_suffix=fallback_suffix)
             except FileNotFoundError:
                 msg = (
-                    f"dcm2niix executable not found (searched PATH={os.environ.get('PATH','')!r}). "
-                    "Is it installed in this environment?"
+                    f"dcm2bids toolchain not found (searched PATH={os.environ.get('PATH','')!r}). "
+                    "Are dcm2bids, dcm2bids_helper, dcm2bids_scaffold and dcm2niix installed?"
                 )
                 log.error("[%s] %s", job_id, msg)
                 job_error(job_id, msg)
@@ -702,8 +758,7 @@ async def convert_dicom(
 
             log.info("[%s] DICOM→BIDS finished OK", job_id)
 
-            # ── Organise top-level BIDS metadata ─────────────────────────────
-            create_bids_top_level_files(bids_out, participant_label)
+            # Top-level BIDS files are written inside build_bids_from_dicom().
             (bids_out / "conversion_log.txt").write_text(conv_log)
 
             # ── Package ──────────────────────────────────────────────────────
