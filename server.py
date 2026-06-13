@@ -20,7 +20,7 @@ Or locally (with a venv that has dcm2bids + mriqc installed):
   uvicorn server:app --host 0.0.0.0 --port 8000
 """
 
-import json, os, uuid, shutil, zipfile, logging, datetime, subprocess
+import json, os, uuid, shutil, zipfile, logging, datetime, subprocess, re, gzip, struct
 from collections import deque
 from pathlib import Path
 from threading import Thread, Lock
@@ -228,128 +228,284 @@ def job_status(job_id: str) -> dict | None:
 # DICOM → BIDS helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-def generate_dcm2bids_config(temp_dir: Path) -> Path:
-    config = {
-        "descriptions": [
-            {"datatype": "anat",  "suffix": "T1w",
-             "criteria": {"SeriesDescription": "*T1*",
-                          "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|PERMANY|OTHER).*"]},
-             "sidecar_changes": {"ProtocolName": "T1w"}},
-            {"datatype": "anat",  "suffix": "T2w",
-             "criteria": {"SeriesDescription": "*T2*",
-                          "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|PERMANY).*"]},
-             "sidecar_changes": {"ProtocolName": "T2w"}},
-            {"datatype": "anat",  "suffix": "FLAIR",
-             "criteria": {"SeriesDescription": "*FLAIR*",
-                          "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|PERMANY).*"]}},
-            {"datatype": "func",  "suffix": "bold",
-             "criteria": {"SeriesDescription": "*BOLD*",
-                          "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|FMRI|OTHER).*"]},
-             "sidecar_changes": {"TaskName": "rest"}},
-            {"datatype": "func",  "suffix": "sbref",
-             "criteria": {"SeriesDescription": "*SBRef*",
-                          "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|FMRI|OTHER).*"]}},
-            {"datatype": "dwi",   "suffix": "dwi",
-             "criteria": {"SeriesDescription": "*DWI*|*DTI*",
-                          "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|DIFFUSION).*"]},
-             "sidecar_changes": {"PhaseEncodingDirection": "j", "TotalReadoutTime": 0.028}},
-            {"datatype": "fmap",  "suffix": "phasediff",
-             "criteria": {"SeriesDescription": "*FMRI_DISTORTION*",
-                          "ImageType": ["ORIGINAL", "(?i).*(P|PHASE).*"]}},
-            {"datatype": "fmap",  "suffix": "magnitude",
-             "criteria": {"SeriesDescription": "*FMRI_DISTORTION*",
-                          "ImageType": ["ORIGINAL", "(?i).*(M|MAG).*"]}},
-            {"datatype": "perf",  "suffix": "asl",
-             "criteria": {"SeriesDescription": "*ASL*|*Perfusion*",
-                          "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|PERFUSION).*"]}},
-            {"datatype": "func",  "suffix": "bold",
-             "criteria": {"SeriesDescription": "*Nback*",
-                          "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|FMRI).*"]},
-             "sidecar_changes": {"TaskName": "nback"}},
-            {"datatype": "anat",  "suffix": "MESE",
-             "criteria": {"SeriesDescription": "*MultiEcho*",
-                          "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|MULTIECHO).*"]}},
-        ],
-        "default_entities": {"subject": "{subject}", "session": "{session}"},
-    }
-    p = temp_dir / "dcm2bids_config.json"
-    p.write_text(json.dumps(config, indent=2))
-    return p
+def _as_list(v):
+    return v if isinstance(v, list) else ([] if v is None else [v])
 
 
-def run_dcm2bids(dicom_dir: Path, bids_out: Path,
-                 subj_id: str, ses_id: str, config_file: Path) -> str:
-    # Use the resolved absolute path (found at startup) so the subprocess
-    # doesn't rely on PATH being set correctly inside the thread environment.
-    binary = DCM2BIDS_BIN or "dcm2bids"
-    cmd = [binary, "-d", str(dicom_dir), "-p", subj_id,
-           "-c", str(config_file), "-o", str(bids_out)]
-    if ses_id:
-        cmd += ["-s", ses_id]
+def _re_any(text: str, *patterns: str) -> bool:
+    return any(re.search(p, text) for p in patterns)
+
+
+# Substrings that mark a series as a derived map / localizer / report — never raw
+_SKIP_SUBSTR = (
+    "localizer", "scout", "survey", "aahead", "3-plane", "3 plane", "plane_loc",
+    "phoenix", "screenshot", "screen save", "report", "results",
+    "tracew", "_adc", "adc_", " adc", "_fa", "colfa", "fractional aniso",
+    "_cbf", "_rbv", "_mtt", "_ttp", "_tmax", "perfusion_weighted",
+)
+
+
+def _nii_nvols(nii_path: Path):
+    """Number of volumes (NIfTI dim[4]), dependency-free. None if unknown."""
+    try:
+        opener = gzip.open if str(nii_path).endswith(".gz") else open
+        with opener(nii_path, "rb") as f:
+            hdr = f.read(352)
+        if len(hdr) < 352:
+            return None
+        dims = struct.unpack("<8h", hdr[40:56])     # little-endian first
+        if not (1 <= dims[0] <= 7):                 # wrong endianness → big-endian
+            dims = struct.unpack(">8h", hdr[40:56])
+        return dims[4] if dims[0] >= 4 else 1
+    except Exception:
+        return None
+
+
+def _task_name(desc: str) -> str:
+    if "rest" in desc:
+        return "rest"
+    m = re.search(r"task[_\-]?([a-z0-9]+)", desc)
+    if m:
+        return m.group(1)
+    for name in ("nback", "faces", "gambling", "language", "motor",
+                 "emotion", "memory", "stroop", "flanker"):
+        if name in desc:
+            return name
+    return "task"
+
+
+def _pe_dir(meta: dict) -> dict:
+    mapping = {"j-": "AP", "j": "PA", "i-": "RL", "i": "LR", "k-": "IS", "k": "SI"}
+    d = mapping.get(str(meta.get("PhaseEncodingDirection", "")))
+    return {"dir": d} if d else {}
+
+
+def classify_series(meta: dict, has_bval: bool, n_vols):
+    """
+    Decide the BIDS datatype/suffix/entities for ONE converted NIfTI from its
+    dcm2niix sidecar. Returns either
+        {"datatype","suffix","entities":{...}, "sidecar":{...}}   → keep, or
+        {"skip": "<reason>"}                                      → drop.
+
+    Classification is metadata-first (ImageType + sequence params) and name
+    second, so it works for any uploaded subject regardless of how the scanner
+    labelled the series — it catches MPRAGE / BRAVO / SPACE etc., not just *T1*.
+    """
+    itype = [str(x).upper() for x in _as_list(meta.get("ImageType"))]
+    desc  = " ".join(str(meta.get(k, "")) for k in
+                     ("SeriesDescription", "ProtocolName", "SequenceName")).lower()
+    is_deriv = "DERIVED" in itype
+
+    # ── always-drop "junk": localizers / screenshots / derived parametric maps
+    # These are never wanted — not even by the fallback rescue (junk=True).
+    # NOTE: a DERIVED/SECONDARY tag alone is NOT junk: de-identified or
+    # NIfTI-derived exports tag the real scan that way, so it must fall through.
+    if any(s in desc for s in _SKIP_SUBSTR):
+        return {"skip": f"derived/aux series ({meta.get('SeriesDescription', '?')})", "junk": True}
+    if "LOCALIZER" in itype:
+        return {"skip": "localizer", "junk": True}
+
+    # ── diffusion ────────────────────────────────────────────────────────────
+    if has_bval or "DIFFUSION" in itype or _re_any(desc, r"\bdwi\b", r"\bdti\b",
+                                                    r"diffusion", r"\bhardi\b"):
+        if is_deriv:
+            return {"skip": "derived diffusion map", "junk": True}
+        return {"datatype": "dwi", "suffix": "dwi", "entities": {}}
+
+    # ── field maps ───────────────────────────────────────────────────────────
+    if _re_any(desc, r"field.?map", r"\bfmap\b", r"gre.?field", r"\bb0\b",
+               r"distortion", r"topup", r"pepolar", r"se.?epi"):
+        if _re_any(desc, r"se.?epi", r"pepolar", r"topup", r"distortion") and \
+           (n_vols is None or n_vols <= 10):
+            return {"datatype": "fmap", "suffix": "epi", "entities": _pe_dir(meta)}
+        if "PHASE" in itype or "P" in itype:
+            return {"datatype": "fmap", "suffix": "phasediff", "entities": {}}
+        return {"datatype": "fmap", "suffix": "magnitude", "entities": {}}
+
+    # ── functional ───────────────────────────────────────────────────────────
+    if _re_any(desc, r"\bbold\b", r"\bfmri\b", r"resting", r"\brest\b",
+               r"\btask\b", r"ep2d.?bold", r"\bfunc\b") and (n_vols is None or n_vols > 1):
+        task = _task_name(desc)
+        return {"datatype": "func", "suffix": "bold",
+                "entities": {"task": task}, "sidecar": {"TaskName": task}}
+    if _re_any(desc, r"sbref", r"single.?band"):
+        return {"datatype": "func", "suffix": "sbref",
+                "entities": {"task": _task_name(desc)}}
+
+    # ── anatomical ───────────────────────────────────────────────────────────
+    if _re_any(desc, r"flair"):
+        return {"datatype": "anat", "suffix": "FLAIR", "entities": {}}
+    if _re_any(desc, r"\bt2w?\b", r"\bspace\b", r"\bcube\b", r"\btse\b") \
+       and not _re_any(desc, r"t2star", r"t2\*"):
+        return {"datatype": "anat", "suffix": "T2w", "entities": {}}
+    if _re_any(desc, r"mprage", r"mp.?rage", r"memprage", r"\bt1w?\b",
+               r"bravo", r"fspgr", r"\bspgr\b", r"\btfl\b", r"\bmpr\b"):
+        return {"datatype": "anat", "suffix": "T1w", "entities": {}}
+    # MPRAGE-like even when oddly named: 3D inversion-recovery with a short TE
+    if str(meta.get("MRAcquisitionType", "")).upper() == "3D" and \
+       meta.get("InversionTime") and (meta.get("EchoTime") or 99) < 10:
+        return {"datatype": "anat", "suffix": "T1w", "entities": {}}
+
+    # Not a recognized standard modality, but may still be a real image (e.g. a
+    # de-identified NIfTI-derived export). Mark as non-junk so the rescue in
+    # build_bids_from_dicom() can place it instead of yielding an empty dataset.
+    return {"skip": f"no standard-modality match ({meta.get('SeriesDescription', '?')})",
+            "junk": False}
+
+
+# BIDS entity order for filename assembly (subset relevant to MRIQC inputs)
+_ENTITY_ORDER = ("task", "acq", "ce", "rec", "dir", "run", "echo", "part")
+
+
+def _bids_stem(subj: str, ses: str, entities: dict, suffix: str) -> str:
+    parts = [f"sub-{subj}"] + ([f"ses-{ses}"] if ses else [])
+    for k in _ENTITY_ORDER:
+        v = entities.get(k)
+        if v not in (None, ""):
+            parts.append(f"{k}-{v}")
+    parts.append(suffix)
+    return "_".join(parts)
+
+
+def run_dcm2niix(dicom_dir: Path, out_dir: Path) -> str:
+    """Convert *every* series under dicom_dir to NIfTI+JSON (+bval/bvec)."""
+    binary = DCM2NIIX_BIN or "dcm2niix"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # -b y  BIDS sidecars · -z y  gzip · -f %s_%d  seriesNo_description (unique)
+    cmd = [binary, "-b", "y", "-z", "y", "-f", "%s_%d",
+           "-o", str(out_dir), str(dicom_dir)]
     log.info("CMD: %s", " ".join(cmd))
-    # Pass explicit env so the subprocess inherits the PATH we set at startup,
-    # including any conda / local-bin entries that were added above.
-    r = subprocess.run(cmd, capture_output=True, text=True,
-                       env=os.environ.copy())
-    log.info("dcm2bids stdout: %s", r.stdout[-2000:] if r.stdout else "(empty)")
-    log.info("dcm2bids stderr: %s", r.stderr[-2000:] if r.stderr else "(empty)")
-    out = f"CMD: {' '.join(cmd)}\n\n{r.stdout}\n{r.stderr}".strip()
-    if r.returncode != 0:
-        raise RuntimeError(f"dcm2bids failed (exit {r.returncode}):\n{r.stderr[-3000:]}")
-    return out
+    r = subprocess.run(cmd, capture_output=True, text=True, env=os.environ.copy())
+    log.info("dcm2niix stdout: %s", (r.stdout or "(empty)")[-2000:])
+    if r.stderr.strip():
+        log.info("dcm2niix stderr: %s", r.stderr[-2000:])
+    # dcm2niix returns non-zero only on hard failure; individual bad series are
+    # skipped while the rest still convert — emptiness is caught downstream.
+    return f"CMD: {' '.join(cmd)}\n\n{r.stdout}\n{r.stderr}".strip()
 
 
-def classify_and_move_original_files(bids_out: Path, subj_id: str, ses_id: str):
-    tmp_root = bids_out / "tmp_dcm2bids"
-    if not tmp_root.exists():
-        return
-    candidates = [
-        tmp_root / f"sub-{subj_id}_ses-{ses_id}",
-        tmp_root / f"sub-{subj_id}",
-        tmp_root,
-    ]
-    tmp_folder = next(
-        (p for p in candidates if p.exists() and any(p.rglob("*.json"))),
-        tmp_root,
-    )
-    ses_dir = bids_out / f"sub-{subj_id}" / (f"ses-{ses_id}" if ses_id else "")
-    ses_dir.mkdir(parents=True, exist_ok=True)
-    modality_paths = {
-        "anat": ses_dir / "anat", "dwi": ses_dir / "dwi",
-        "func": ses_dir / "func", "perf": ses_dir / "perf",
-    }
-    for json_file in tmp_folder.rglob("*.json"):
+def build_bids_from_dicom(dicom_dir: Path, bids_out: Path,
+                          subj_id: str, ses_id: str,
+                          fallback_suffix: str = "T1w") -> str:
+    """
+    Robust DICOM→BIDS for a single subject:
+      1. dcm2niix converts EVERY series to NIfTI+JSON in a temp dir.
+      2. Each image is classified from its sidecar (metadata-first).
+      3. Accepted images are renamed to valid BIDS — with run- entities for
+         repeats — and moved into sub-XX/[ses-YY]/<datatype>/.
+
+    Fallback rescue: if no series matches a standard modality (common for
+    de-identified / NIfTI-derived DICOMs, which are tagged DERIVED/SECONDARY
+    with generic names), every real, non-junk image volume is placed as
+    anat/<fallback_suffix>, so a valid, NON-EMPTY dataset is always produced.
+    Raises RuntimeError (with the per-series breakdown) only when there is no
+    real image at all — an empty result can never pass silently.
+    """
+    tmp_nii = bids_out / "tmp_nifti"
+    conv_log = run_dcm2niix(dicom_dir, tmp_nii)
+
+    # ── gather every converted image ─────────────────────────────────────────
+    images = []
+    for js in sorted(tmp_nii.glob("*.json")):
+        nii = js.with_suffix(".nii.gz")
+        if not nii.exists():
+            nii = js.with_suffix(".nii")
+        if not nii.exists():
+            continue                                  # sidecar with no image
         try:
-            meta = json.loads(json_file.read_text())
+            meta = json.loads(js.read_text())
         except Exception:
-            continue
-        image_type = meta.get("ImageType", [])
-        if isinstance(image_type, str):
-            image_type = [image_type]
-        if not any("original" in t.lower() for t in image_type):
-            continue
-        desc  = (meta.get("SeriesDescription", "") + " " + meta.get("ProtocolName", "")).lower()
-        pulse = meta.get("PulseSequenceName", "").lower()
-        if   "t1" in desc and "flair" not in desc:               modality, suffix = "anat", "T1w"
-        elif "t2" in desc:                                        modality, suffix = "anat", "T2w"
-        elif "flair" in desc or "fluid" in desc:                  modality, suffix = "anat", "FLAIR"
-        elif "dwi"  in desc or "dti" in desc:                    modality, suffix = "dwi",  "dwi"
-        elif any(k in desc for k in ("bold","fmri","functional")) or "epi" in pulse:
-                                                                  modality, suffix = "func", "bold"
-        elif "asl" in desc or "perfusion" in desc:               modality, suffix = "perf", "asl"
+            meta = {}
+        bval = js.with_suffix(".bval")
+        bvec = js.with_suffix(".bvec")
+        images.append({
+            "json_path": js, "nii_path": nii,
+            "bval": bval if bval.exists() else None,
+            "bvec": bvec if bvec.exists() else None,
+            "meta": meta, "nvols": _nii_nvols(nii),
+            "series": meta.get("SeriesNumber", 0),
+            "label": meta.get("SeriesDescription") or js.stem,
+            "size": nii.stat().st_size,
+        })
+
+    # ── pass 1: classify into standard modalities ────────────────────────────
+    accepted, skipped = [], []
+    for im in images:
+        d = classify_series(im["meta"], im["bval"] is not None, im["nvols"])
+        if "skip" in d:
+            skipped.append((im, d))
         else:
-            continue
-        nii = json_file.with_suffix(".nii.gz")
-        if not nii.exists():
-            nii = json_file.with_suffix(".nii")
-        if not nii.exists():
-            continue
-        tgt = modality_paths[modality]
-        tgt.mkdir(parents=True, exist_ok=True)
-        base = f"sub-{subj_id}" + (f"_ses-{ses_id}" if ses_id else "") + f"_{suffix}"
-        shutil.move(str(json_file), str(tgt / f"{base}.json"))
-        shutil.move(str(nii),       str(tgt / f"{base}.nii.gz"))
-    shutil.rmtree(tmp_root, ignore_errors=True)
+            d.update(im)
+            accepted.append(d)
+
+    # ── pass 2 (fallback rescue): no standard match → keep the real volumes ───
+    used_fallback = False
+    if not accepted:
+        used_fallback = True
+        for im, d in skipped:
+            if d.get("junk") or im["size"] < 50_000:   # drop localizer/report/tiny
+                continue
+            im["_rescued"] = True
+            entry = {"datatype": "anat", "suffix": fallback_suffix, "entities": {}}
+            entry.update(im)
+            accepted.append(entry)
+
+    # ── assign run- entities to repeated acquisitions ────────────────────────
+    groups: dict = {}
+    for d in accepted:
+        key = (d["datatype"], d["suffix"], d["entities"].get("task"),
+               d["entities"].get("dir"), d["entities"].get("acq"))
+        groups.setdefault(key, []).append(d)
+    for members in groups.values():
+        if len(members) > 1:
+            for i, d in enumerate(sorted(members, key=lambda x: x["series"]), 1):
+                d["entities"]["run"] = i
+
+    # ── lay out the BIDS tree ────────────────────────────────────────────────
+    placed = []
+    for d in accepted:
+        dest_dir = bids_out / f"sub-{subj_id}" / (f"ses-{ses_id}" if ses_id else "") / d["datatype"]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        stem = _bids_stem(subj_id, ses_id, d["entities"], d["suffix"])
+
+        sidecar = dict(d["meta"])
+        sidecar.update(d.get("sidecar", {}))          # e.g. TaskName for bold
+        (dest_dir / f"{stem}.json").write_text(json.dumps(sidecar, indent=2))
+        shutil.move(str(d["nii_path"]), str(dest_dir / f"{stem}.nii.gz"))
+        if d.get("bval"):
+            shutil.move(str(d["bval"]), str(dest_dir / f"{stem}.bval"))
+        if d.get("bvec"):
+            shutil.move(str(d["bvec"]), str(dest_dir / f"{stem}.bvec"))
+        placed.append(f"{d['label']}  ->  {d['datatype']}/{stem}.nii.gz")
+
+    shutil.rmtree(tmp_nii, ignore_errors=True)
+
+    # ── summary + hard guarantee against an empty result ─────────────────────
+    summary = ["", "-- BIDS conversion summary --------------------------------"]
+    if used_fallback:
+        summary.append(
+            f"NOTE: no standard modality name was found; placed the real image "
+            f"series as anat/{fallback_suffix} by fallback. If a scan is actually "
+            f"T2w/FLAIR/bold, pass the correct modality (fallback_suffix).")
+    summary.append(f"placed {len(placed)} image(s):")
+    summary += [f"  [+] {p}" for p in placed]
+    shown_skips = [(im, d) for im, d in skipped if not im.get("_rescued")]
+    if shown_skips:
+        summary.append(f"skipped {len(shown_skips)} series:")
+        summary += [f"  [-] {im['label']}  ({d['skip']})" for im, d in shown_skips]
+    conv_log += "\n" + "\n".join(summary)
+
+    if not placed:
+        raise RuntimeError(
+            "No BIDS-usable images were produced. dcm2niix converted "
+            f"{len(images)} image(s), but none were real, non-localizer volumes:\n"
+            + "\n".join(f"  - {im['label']}  ({d['skip']})" for im, d in skipped)
+            + "\n\nUpload a subject that contains an anatomical/functional scan, "
+              "or share a SeriesDescription so a rule can be added to classify_series()."
+        )
+    log.info("BIDS layout complete: %d placed, %d skipped%s",
+             len(placed), len(shown_skips), " (fallback)" if used_fallback else "")
+    return conv_log
 
 
 def create_bids_top_level_files(bids_dir: Path, subject_id: str):
@@ -459,11 +615,18 @@ async def convert_dicom(
     dicom_zip:        UploadFile = File(...),
     participant_label: str = Form("01"),
     session_id:        str = Form(""),
+    modality:          str = Form("T1w"),   # fallback suffix for de-identified scans
     authorization:    str = Header(None),
 ):
     participant_label = participant_label.strip()
     if not participant_label or not participant_label.replace("-", "").replace("_", "").isalnum():
         raise HTTPException(400, "Participant label must be alphanumeric")
+
+    # Standard anatomical suffix to fall back to when a series has no recognizable
+    # modality name (de-identified / NIfTI-derived uploads). Whitelisted so it can
+    # never inject bad text into BIDS filenames; unknown values default to T1w.
+    fallback_suffix = modality.strip() if modality.strip() in (
+        "T1w", "T2w", "FLAIR", "PDw", "T2starw") else "T1w"
 
     job_id   = str(uuid.uuid4())[:8]
     work_dir = WORK_ROOT / job_id
@@ -515,15 +678,15 @@ async def convert_dicom(
             log.info("[%s] Extracted %d files", job_id, dicom_count)
 
             # ── Convert ──────────────────────────────────────────────────────
-            bids_out    = work_dir / "bids"
+            bids_out = work_dir / "bids"
             bids_out.mkdir(parents=True, exist_ok=True)
-            config_file = generate_dcm2bids_config(work_dir)
-            log.info("[%s] Running dcm2bids (binary=%s) …", job_id, DCM2BIDS_BIN)
+            log.info("[%s] Converting DICOM→BIDS via dcm2niix (binary=%s) …", job_id, DCM2NIIX_BIN)
             try:
-                conv_log = run_dcm2bids(dicom_dir, bids_out, participant_label, session_id, config_file)
+                conv_log = build_bids_from_dicom(dicom_dir, bids_out, participant_label,
+                                                 session_id, fallback_suffix=fallback_suffix)
             except FileNotFoundError:
                 msg = (
-                    f"dcm2bids executable not found (searched PATH={os.environ.get('PATH','')!r}). "
+                    f"dcm2niix executable not found (searched PATH={os.environ.get('PATH','')!r}). "
                     "Is it installed in this environment?"
                 )
                 log.error("[%s] %s", job_id, msg)
@@ -531,15 +694,15 @@ async def convert_dicom(
                 shutil.rmtree(work_dir, ignore_errors=True)
                 return
             except RuntimeError as e:
-                log.error("[%s] dcm2bids RuntimeError: %s", job_id, e)
+                # Includes the "no usable images" case, with the per-series breakdown.
+                log.error("[%s] Conversion error: %s", job_id, e)
                 job_error(job_id, str(e))
                 shutil.rmtree(work_dir, ignore_errors=True)
                 return
 
-            log.info("[%s] dcm2bids finished OK", job_id)
+            log.info("[%s] DICOM→BIDS finished OK", job_id)
 
-            # ── Organise ─────────────────────────────────────────────────────
-            classify_and_move_original_files(bids_out, participant_label, session_id)
+            # ── Organise top-level BIDS metadata ─────────────────────────────
             create_bids_top_level_files(bids_out, participant_label)
             (bids_out / "conversion_log.txt").write_text(conv_log)
 
